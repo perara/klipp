@@ -16,7 +16,7 @@ klipp  It's disabled: `canSave` is false until the form is dirty
 ## Quick start
 
 ```bash
-npm install -D https://github.com/perara/klipp/releases/download/v0.2.0/klipp-0.2.0.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.2.1/klipp-0.2.1.tgz
 ```
 
 ```ts

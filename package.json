@@ -1,6 +1,6 @@
 {
   "name": "klipp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A paperclip that lives in your web app while you build it: point at what looks wrong, and it reads the code behind it and files the GitHub issue.",
   "license": "MIT",
   "author": "Per-Arne Andersen",
@@ -42,8 +42,7 @@
     "format:write": "prettier --write .",
     "check": "npm run format && npm run typecheck && npm test && npm run build",
     "test:e2e": "npm run build && playwright test",
-    "example": "npm run build && vite examples/react-app",
-    "prepare": "npm run build"
+    "example": "npm run build && vite examples/react-app"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
