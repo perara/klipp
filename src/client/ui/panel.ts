@@ -82,13 +82,25 @@ export function renderPanel(props: PanelProps): HTMLElement {
     .map((sid) => manifest?.entries[sid])
     .filter((e): e is ManifestEntry => Boolean(e));
   if (chain.length) {
-    const items = chain
-      .slice(0, 4)
-      .map((e) =>
-        h('li', {}, h('code', {}, `<${e.name}>`), ` in ${e.owner} · `, codeLine(props, e)),
-      );
-    if (chain.length > 4) items.push(h('li', { class: 'small' }, `and ${chain.length - 4} more`));
-    rows.push(['Rendered by', h('ol', {}, ...items)]);
+    const item = (e: ManifestEntry) =>
+      h('li', {}, h('code', {}, `<${e.name}>`), ` in ${e.owner} · `, codeLine(props, e));
+    // The two nearest call sites are the ones that matter; the rest fold away so the actions stay in view.
+    const rest = chain.slice(2);
+    rows.push([
+      'Rendered by',
+      h(
+        'div',
+        {},
+        h('ol', {}, ...chain.slice(0, 2).map(item)),
+        rest.length > 0 &&
+          h(
+            'details',
+            {},
+            h('summary', { class: 'small' }, `${rest.length} more`),
+            h('ol', {}, ...rest.map(item)),
+          ),
+      ),
+    ]);
   }
   rows.push([
     'State',

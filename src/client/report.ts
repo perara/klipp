@@ -24,6 +24,8 @@ export interface ReportInput {
   /** Only when the reporter opted in: the element's visible text and labels. */
   text?: string[];
   env: ReportEnv;
+  /** Query parameters kept with their values; see `redactedUrl`. */
+  keepQuery?: readonly string[];
 }
 
 const ARIA_STATES = [
@@ -93,24 +95,44 @@ export function visibleText(el: Element): string[] {
   return out;
 }
 
-function scrubQuery(query: string): string {
-  const keys = new Set(
-    query
-      .split('&')
-      .map((pair) => pair.split('=', 1)[0]!)
-      .filter((key) => key && key !== 'klipp'),
-  );
-  return [...keys].map((key) => `${key}=…`).join('&');
+/** The key of each query pair, skipping Klipp's own and repeats. */
+function queryPairs(query: string): Array<[string, string]> {
+  const seen = new Set<string>();
+  const pairs: Array<[string, string]> = [];
+  for (const pair of query.split('&')) {
+    const key = pair.split('=', 1)[0]!;
+    if (!key || key === 'klipp' || seen.has(key)) continue;
+    seen.add(key);
+    pairs.push([key, pair]);
+  }
+  return pairs;
 }
 
-/** The page address with query values blanked; a hash route keeps its path, any other fragment is blanked. */
-export function redactedUrl(href: string): string {
+/** Every value blanked, except for the keys in `keep`. */
+function scrubQuery(query: string, keep: readonly string[]): string {
+  return queryPairs(query)
+    .map(([key, pair]) => (keep.includes(key) ? pair : `${key}=…`))
+    .join('&');
+}
+
+/** Only the pairs in `keep`, as they were. */
+function keptQuery(query: string, keep: readonly string[]): string[] {
+  return queryPairs(query)
+    .filter(([key]) => keep.includes(key))
+    .map(([, pair]) => pair);
+}
+
+/**
+ * The page address with query values blanked; a hash route keeps its path, any other fragment
+ * is blanked. `keep` names query parameters the page needs to open the same way, such as `demo`.
+ */
+export function redactedUrl(href: string, keep: readonly string[] = []): string {
   const url = new URL(href);
-  const query = scrubQuery(url.search.slice(1));
+  const query = scrubQuery(url.search.slice(1), keep);
   let hash = '';
   if (url.hash.startsWith('#/')) {
     const [path, routeQuery] = url.hash.slice(1).split('?', 2);
-    const scrubbed = routeQuery ? scrubQuery(routeQuery) : '';
+    const scrubbed = routeQuery ? scrubQuery(routeQuery, keep) : '';
     hash = `#${path}${scrubbed ? `?${scrubbed}` : ''}`;
   } else if (url.hash) {
     hash = '#…';
@@ -118,11 +140,17 @@ export function redactedUrl(href: string): string {
   return `${url.origin}${url.pathname}${query ? `?${query}` : ''}${hash}`;
 }
 
-/** A link that opens the page with the element highlighted. */
-export function deepLink(href: string, id: string): string {
+/** A link that opens the page with the element highlighted, keeping only the query parameters in `keep`. */
+export function deepLink(href: string, id: string, keep: readonly string[] = []): string {
   const url = new URL(href);
-  const route = url.hash.startsWith('#/') ? `#${url.hash.slice(1).split('?', 1)[0]}` : '';
-  return `${url.origin}${url.pathname}?klipp=${encodeURIComponent(id)}${route}`;
+  const params = [...keptQuery(url.search.slice(1), keep), `klipp=${encodeURIComponent(id)}`];
+  let route = '';
+  if (url.hash.startsWith('#/')) {
+    const [path, routeQuery] = url.hash.slice(1).split('?', 2);
+    const kept = routeQuery ? keptQuery(routeQuery, keep) : [];
+    route = `#${path}${kept.length ? `?${kept.join('&')}` : ''}`;
+  }
+  return `${url.origin}${url.pathname}?${params.join('&')}${route}`;
 }
 
 export function codeLabel(entry: ManifestEntry): string {
@@ -181,7 +209,7 @@ export function buildReport(input: ReportInput): string {
   }
   if (facts.states.length) row('State', facts.states.join(', '));
   row('Box', facts.box);
-  row('Page', `\`${redactedUrl(env.href)}\``);
+  row('Page', `\`${redactedUrl(env.href, input.keepQuery)}\``);
   row('Build', buildLine(manifest));
   row('Browser', `${env.userAgent}<br>${env.viewport}, ${env.colorScheme}`);
 
@@ -196,7 +224,7 @@ export function buildReport(input: ReportInput): string {
     );
   }
   if (identity.id) {
-    lines.push('', `Open the element: ${deepLink(env.href, identity.id)}`);
+    lines.push('', `Open the element: ${deepLink(env.href, identity.id, input.keepQuery)}`);
     lines.push('', `<sub>klipp:${identity.sid}</sub>`);
   }
   return lines.join('\n');

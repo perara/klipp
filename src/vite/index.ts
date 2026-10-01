@@ -31,6 +31,11 @@ export interface KlippOptions {
   launcher?: Corner | false;
   /** Show the character in browsers driven by automation too. Default: false. */
   launcherUnderAutomation?: boolean;
+  /**
+   * Query parameters a page needs to open the same way, such as a `demo` flag. They keep their
+   * values in reports and Klipp links; every other query value is blanked. Default: none.
+   */
+  keepQuery?: string[];
 }
 
 const ENTRY = '/@klipp/entry';
@@ -117,6 +122,7 @@ export default function klipp(options: KlippOptions = {}): Plugin {
       hotkey: options.hotkey ?? 'alt+shift+k',
       launcher: options.launcher ?? 'bottom-right',
       launcherUnderAutomation: options.launcherUnderAutomation ?? false,
+      keepQuery: options.keepQuery ?? [],
     };
   }
 

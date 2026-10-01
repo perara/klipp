@@ -55,6 +55,16 @@ describe('redactedUrl', () => {
   });
 });
 
+describe('keepQuery', () => {
+  it('keeps the named parameters with their values and blanks the rest', () => {
+    const href = 'https://app.test/map?demo=1&person=Ola&klipp=old#/x?demo=1&q=Kari';
+    expect(redactedUrl(href, ['demo'])).toBe('https://app.test/map?demo=1&person=…#/x?demo=1&q=…');
+    expect(deepLink(href, 'aaaaaaaa.x7k2', ['demo'])).toBe(
+      'https://app.test/map?demo=1&klipp=aaaaaaaa.x7k2#/x?demo=1',
+    );
+  });
+});
+
 describe('deepLink', () => {
   it('drops the query, keeps the route, and adds the id', () => {
     expect(deepLink(env.href, 'aaaaaaaa.x7k2')).toBe(

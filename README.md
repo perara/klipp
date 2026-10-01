@@ -65,20 +65,22 @@ klipp.find('7est6jqn.oyy8'); // → the element
 
 Reports are **redacted by default**. They include the element's tag, role, state (disabled,
 hidden, covered, outside the viewport), its size and position, the code locations, the build,
-and the browser. Query values and non-route URL fragments are blanked. The element's own text
+and the browser. Query values and non-route URL fragments are blanked, except the parameters named in
+`keepQuery`. The element's own text
 is included only when the reporter ticks the box, and form values never are.
 
 ## Options
 
-| Option                    | Default                           | What it does                                                          |
-| ------------------------- | --------------------------------- | --------------------------------------------------------------------- |
-| `enabled`                 | dev only                          | Force Klipp on or off.                                                |
-| `include` / `exclude`     | `.jsx`/`.tsx`, not `node_modules` | Which files to stamp.                                                 |
-| `stampComponents`         | `true`                            | Mark component call sites so shared components tell their uses apart. |
-| `repo` / `commit`         | from `git`                        | Where permalinks point.                                               |
-| `hotkey`                  | `alt+shift+k`                     |                                                                       |
-| `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for hotkey only.                 |
-| `launcherUnderAutomation` | `false`                           | Show the paperclip under Playwright/WebDriver too.                    |
+| Option                    | Default                           | What it does                                                                          |
+| ------------------------- | --------------------------------- | ------------------------------------------------------------------------------------- |
+| `enabled`                 | dev only                          | Force Klipp on or off.                                                                |
+| `include` / `exclude`     | `.jsx`/`.tsx`, not `node_modules` | Which files to stamp.                                                                 |
+| `stampComponents`         | `true`                            | Mark component call sites so shared components tell their uses apart.                 |
+| `repo` / `commit`         | from `git`                        | Where permalinks point.                                                               |
+| `hotkey`                  | `alt+shift+k`                     |                                                                                       |
+| `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for hotkey only.                                 |
+| `launcherUnderAutomation` | `false`                           | Show the paperclip under Playwright/WebDriver too.                                    |
+| `keepQuery`               | `[]`                              | Query parameters (such as a `demo` flag) kept with their values in reports and links. |
 
 ## How it works
 

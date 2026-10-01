@@ -191,10 +191,27 @@ export function createApp(config: RuntimeConfig): KlippApp {
     ui.bubble.hidden = true;
   }
 
+  /**
+   * Pointing passes through the banner (only its Cancel button takes clicks), so what is under
+   * it can be picked; the banner fades meanwhile so that it can be seen.
+   */
+  function fadeBanner(event: PointerEvent) {
+    const r = ui.banner.getBoundingClientRect();
+    const under =
+      event.clientX >= r.left &&
+      event.clientX <= r.right &&
+      event.clientY >= r.top &&
+      event.clientY <= r.bottom;
+    ui.banner.classList.toggle('faded', under);
+  }
+
   function setMode(next: Mode) {
     mode = next;
     ui.launcher.classList.toggle('active', next !== 'idle');
     ui.banner.hidden = next !== 'picking';
+    ui.banner.classList.remove('faded');
+    if (next === 'picking') window.addEventListener('pointermove', fadeBanner, true);
+    else window.removeEventListener('pointermove', fadeBanner, true);
   }
 
   function close() {
@@ -262,6 +279,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
       note: draft.note,
       ...(draft.includeText ? { text: visibleText(element) } : {}),
       env: currentEnv(),
+      keepQuery: config.keepQuery,
     });
   }
 
@@ -291,7 +309,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
         hasParent,
         hasBeneath: index >= 0 && index < current.stack.length - 1,
         copyReport: () => copyText(report(current)),
-        copyLink: () => copyText(deepLink(location.href, identify(element).id)),
+        copyLink: () => copyText(deepLink(location.href, identify(element).id, config.keepQuery)),
         copyId: () => copyText(identify(element).id),
         openInEditor,
         parent: () => hasParent && move(parent!),

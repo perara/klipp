@@ -175,9 +175,13 @@ kbd {
   border-radius: 999px;
   background: var(--bg);
   box-shadow: var(--shadow);
-  pointer-events: auto;
+  pointer-events: none;
+  transition: opacity 120ms ease;
   z-index: 3;
 }
+.banner .btn { pointer-events: auto; }
+.banner.faded { opacity: 0.3; }
+.banner.faded:has(.btn:hover) { opacity: 1; }
 .banner .clip { width: 16px; height: 22px; flex: none; }
 .banner .hint { color: var(--muted); }
 
@@ -235,6 +239,8 @@ kbd {
 .panel ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
 .panel a { color: var(--accent); text-decoration: none; }
 .panel a:hover { text-decoration: underline; }
+.panel summary { cursor: pointer; margin-top: 2px; }
+.panel details ol { margin-top: 2px; }
 .panel .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .panel .chip { padding: 0 6px; border-radius: 999px; background: var(--soft); border: 1px solid var(--line); font-size: 12px; }
 .panel .warning { color: var(--warn); font-size: 12px; }

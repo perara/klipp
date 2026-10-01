@@ -57,6 +57,13 @@ test('a Klipp link opens the page on the same element', async ({ page }) => {
   expect(await page.evaluate((text) => window.klipp!.find(text)?.textContent, id)).toBe('Beta');
 });
 
+test('a Klipp link that arrives by client-side navigation is followed too', async ({ page }) => {
+  // As when an app sends the user through sign-in and back with history.pushState.
+  const id = await idOf(page.getByRole('button', { name: 'Reverse' }));
+  await page.evaluate((text) => history.pushState({}, '', `?klipp=${text}`), id);
+  await expect(panel(page).getByTestId('klipp-id')).toHaveText(id);
+});
+
 test('the report links the code and leaves on-screen text out unless asked', async ({ page }) => {
   await pick(page, page.locator('li', { hasText: 'Beta' }).locator('span'));
   const dialog = panel(page);
@@ -92,6 +99,21 @@ test('arrow keys walk to the parent before picking', async ({ page }) => {
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
   await expect(panel(page)).toContainText('<li> in App');
+});
+
+test('what is under the banner can still be picked, and Cancel still works', async ({ page }) => {
+  await openPicker(page);
+  const box = (await banner(page).boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + box.height / 2);
+  await expect(banner(page)).toHaveClass(/faded/);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(panel(page)).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await openPicker(page);
+  await banner(page).getByRole('button', { name: 'Cancel' }).click();
+  await expect(banner(page)).toBeHidden();
 });
 
 test('every mode can be left, and the page works normally after', async ({ page }) => {

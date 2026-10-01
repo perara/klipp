@@ -78,8 +78,20 @@ export function start(config: RuntimeConfig): void {
     true,
   );
 
-  const linked = new URLSearchParams(window.location.search).get('klipp');
-  if (linked) void app().then((a) => a.reveal(linked));
+  // A Klipp link can arrive after a client-side navigation too, such as the return from a
+  // sign-in page, so the address is watched rather than read once.
+  let revealed: string | null = null;
+  const followLink = () => {
+    const linked = new URLSearchParams(window.location.search).get('klipp');
+    if (!linked || linked === revealed) return;
+    revealed = linked;
+    void app().then((a) => a.reveal(linked));
+  };
+  followLink();
+  const navigation = (window as { navigation?: EventTarget }).navigation;
+  if (navigation) navigation.addEventListener('currententrychange', followLink);
+  else setInterval(followLink, 1000);
+  window.addEventListener('popstate', followLink);
 
   const automated = navigator.webdriver && !config.launcherUnderAutomation;
   if (config.launcher && !automated) {

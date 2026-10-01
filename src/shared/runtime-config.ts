@@ -12,4 +12,6 @@ export interface RuntimeConfig {
   launcher: Corner | false;
   /** Show the character in browsers driven by automation too; it is hidden there so it can't get in a test's way. */
   launcherUnderAutomation: boolean;
+  /** Query parameters kept with their values in reports and links. */
+  keepQuery: string[];
 }
