@@ -18,8 +18,9 @@ server, as a production build under a base path, and on a touch phone.
 ## Rules
 
 - **Generic.** Nothing here knows about any one app. App-specific behaviour is an option.
-- **Redacted by default.** Reports never carry on-screen text, form values, or query values
-  unless the reporter opts in, and form values never.
+- **Nothing private leaves without a reason.** The model never sees on-screen text, form values
+  or query values; the API key and GitHub token stay in the server; an issue is filed only
+  after the user clicks to file it.
 - **No stuck modes.** Every mode leaves with Esc and with a visible control, and works by
   touch. Only one mode is active at a time.
 - **Strict-CSP safe.** No `innerHTML`, no inline `style` attributes, no inline scripts. Build

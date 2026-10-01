@@ -1,31 +1,12 @@
 import { isDirty, permalink, type KlippManifest, type ManifestEntry } from '../shared/manifest.js';
 import type { Identity } from './identify.js';
 
-/** What the report says about the element. Structure and state only: no text, no values. */
+/** Structure and state of an element. No text, no values. */
 export interface Facts {
   tag: string;
   attributes: string[];
   states: string[];
   box: string;
-}
-
-export interface ReportEnv {
-  href: string;
-  userAgent: string;
-  viewport: string;
-  colorScheme: string;
-}
-
-export interface ReportInput {
-  identity: Identity;
-  manifest: KlippManifest | undefined;
-  facts: Facts;
-  note: string;
-  /** Only when the reporter opted in: the element's visible text and labels. */
-  text?: string[];
-  env: ReportEnv;
-  /** Query parameters kept with their values; see `redactedUrl`. */
-  keepQuery?: readonly string[];
 }
 
 const ARIA_STATES = [
@@ -40,7 +21,7 @@ const ARIA_STATES = [
 ];
 
 /**
- * @param hitTest the page element at a viewport point, ignoring Klipp's own UI.
+ * @param hitTest the page element at a viewport point, looking through Klipp's own UI.
  * @param describe a short name for another element, such as `<div> 3f9a2c1d.x7k2`.
  */
 export function elementFacts(
@@ -59,8 +40,7 @@ export function elementFacts(
     if (value !== null) states.push(`${name}=${value}`);
   }
   if (el.closest('[inert]')) states.push('inert');
-  const style = getComputedStyle(el);
-  if (style.pointerEvents === 'none') states.push('pointer-events: none');
+  if (getComputedStyle(el).pointerEvents === 'none') states.push('pointer-events: none');
   const visible =
     typeof el.checkVisibility === 'function'
       ? el.checkVisibility({ opacityProperty: true, visibilityProperty: true })
@@ -78,21 +58,6 @@ export function elementFacts(
   }
   const box = `${Math.round(r.width)}×${Math.round(r.height)} at ${Math.round(r.left)},${Math.round(r.top)}`;
   return { tag: el.localName, attributes, states, box };
-}
-
-/** Labels and visible text. Never form values. */
-export function visibleText(el: Element): string[] {
-  const out: string[] = [];
-  for (const name of ['aria-label', 'title', 'alt', 'placeholder']) {
-    const value = el.getAttribute(name);
-    if (value) out.push(`${name}: ${value}`);
-  }
-  if (!el.matches('input, textarea, select')) {
-    const raw = (el as HTMLElement).innerText ?? el.textContent ?? '';
-    const text = raw.replace(/\s+/g, ' ').trim();
-    if (text) out.push(text.length > 280 ? `${text.slice(0, 279)}…` : text);
-  }
-  return out;
 }
 
 /** The key of each query pair, skipping Klipp's own and repeats. */
@@ -172,59 +137,40 @@ function buildLine(manifest: KlippManifest | undefined): string {
   return manifest.dirtyFiles?.length ? `${link}, with local changes` : link;
 }
 
-const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-
-function fence(text: string): string {
-  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-  const marks = '`'.repeat(longest + 1);
-  return `${marks}text\n${text}\n${marks}`;
+export interface FooterInput {
+  identity: Identity | undefined;
+  facts: Facts | undefined;
+  manifest: KlippManifest | undefined;
+  href: string;
+  browser: string;
+  keepQuery?: readonly string[];
 }
 
-export function buildReport(input: ReportInput): string {
-  const { identity, manifest, facts, env } = input;
-  const entry = identity.sid ? manifest?.entries[identity.sid] : undefined;
-  const lines: string[] = [];
-  const tag = `\`<${facts.tag}>\``;
-  lines.push(`### Klipp: ${entry ? `${tag} in \`${entry.owner}\`` : tag}`, '');
-  const note = input.note.trim();
-  if (note) lines.push(...note.split('\n').map((line) => `> ${line}`), '');
-
-  lines.push('| | |', '| --- | --- |');
-  const row = (label: string, value: string) => lines.push(`| ${label} | ${cell(value)} |`);
-  const element = [tag, ...facts.attributes.map((a) => `\`${a}\``)].join(' ');
-  row(
-    'Element',
-    identity.id ? `\`${identity.id}\` ${element}` : `${element}, not in the app's own code`,
-  );
-  if (manifest && entry) row('Code', codeLink(manifest, entry));
-  if (identity.path.length)
-    row('Inside', `markup the build did not stamp, child path \`${identity.path.join('/')}\``);
-  const chain = identity.ancestry.callSites
-    .map((sid) => manifest?.entries[sid])
-    .filter((e): e is ManifestEntry => Boolean(e));
-  if (manifest && chain.length) {
-    const shown = chain.slice(0, 6).map((e) => `\`<${e.name}>\` in ${codeLink(manifest, e)}`);
-    if (chain.length > 6) shown.push(`and ${chain.length - 6} more`);
-    row('Rendered by', shown.join('<br>'));
+/** The details Klipp appends to every issue it files: element, code, page, build, browser. */
+export function issueFooter(input: FooterInput): string {
+  const { identity, facts, manifest } = input;
+  const lines = ['---', '', '| Klipp | |', '| --- | --- |'];
+  const row = (label: string, value: string) =>
+    lines.push(`| ${label} | ${value.replace(/\|/g, '\\|').replace(/\n/g, ' ')} |`);
+  const entry = identity?.sid ? manifest?.entries[identity.sid] : undefined;
+  if (identity && facts) {
+    const element = [`\`<${facts.tag}>\``, ...facts.attributes.map((a) => `\`${a}\``)].join(' ');
+    row('Element', identity.id ? `\`${identity.id}\` ${element}` : element);
+    if (manifest && entry) row('Code', codeLink(manifest, entry));
+    const chain = identity.ancestry.callSites
+      .map((sid) => manifest?.entries[sid])
+      .filter((e): e is ManifestEntry => Boolean(e));
+    if (manifest && chain.length) {
+      const shown = chain.slice(0, 4).map((e) => `\`<${e.name}>\` in ${codeLink(manifest, e)}`);
+      row('Rendered by', shown.join('<br>'));
+    }
+    if (facts.states.length) row('State', facts.states.join(', '));
   }
-  if (facts.states.length) row('State', facts.states.join(', '));
-  row('Box', facts.box);
-  row('Page', `\`${redactedUrl(env.href, input.keepQuery)}\``);
+  row('Page', `\`${redactedUrl(input.href, input.keepQuery)}\``);
   row('Build', buildLine(manifest));
-  row('Browser', `${env.userAgent}<br>${env.viewport}, ${env.colorScheme}`);
-
-  if (input.text?.length) {
-    lines.push(
-      '',
-      '<details><summary>Element text, included by the reporter</summary>',
-      '',
-      fence(input.text.join('\n')),
-      '',
-      '</details>',
-    );
-  }
-  if (identity.id) {
-    lines.push('', `Open the element: ${deepLink(env.href, identity.id, input.keepQuery)}`);
+  row('Browser', input.browser);
+  if (identity?.id) {
+    lines.push('', `Open the element: ${deepLink(input.href, identity.id, input.keepQuery)}`);
     lines.push('', `<sub>klipp:${identity.sid}</sub>`);
   }
   return lines.join('\n');

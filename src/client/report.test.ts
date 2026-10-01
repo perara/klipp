@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { HOST_ATTR } from '../shared/id.js';
 import type { KlippManifest } from '../shared/manifest.js';
 import { identify } from './identify.js';
-import { buildReport, deepLink, redactedUrl, visibleText, type Facts } from './report.js';
+import { deepLink, issueFooter, redactedUrl, type Facts } from './report.js';
 
 const manifest: KlippManifest = {
   version: 1,
@@ -36,88 +36,63 @@ const facts: Facts = {
   states: ['disabled'],
   box: '80×32 at 10,20',
 };
-const env = {
-  href: 'https://app.test/people/42?name=Kari+Nordmann&tab=2#/incident/7?person=Ola',
-  userAgent: 'TestBrowser/1',
-  viewport: '1280×800 @1x',
-  colorScheme: 'light',
-};
+const href = 'https://app.test/people/42?name=Kari+Nordmann&tab=2#/incident/7?person=Ola';
 
 describe('redactedUrl', () => {
   it('keeps the path and the hash route but blanks every value', () => {
-    expect(redactedUrl(env.href)).toBe(
-      'https://app.test/people/42?name=…&tab=…#/incident/7?person=…',
-    );
+    expect(redactedUrl(href)).toBe('https://app.test/people/42?name=…&tab=…#/incident/7?person=…');
   });
 
   it('blanks a fragment that is not a route', () => {
     expect(redactedUrl('https://app.test/a#access_token=secret')).toBe('https://app.test/a#…');
   });
-});
 
-describe('keepQuery', () => {
-  it('keeps the named parameters with their values and blanks the rest', () => {
-    const href = 'https://app.test/map?demo=1&person=Ola&klipp=old#/x?demo=1&q=Kari';
-    expect(redactedUrl(href, ['demo'])).toBe('https://app.test/map?demo=1&person=…#/x?demo=1&q=…');
-    expect(deepLink(href, 'aaaaaaaa.x7k2', ['demo'])).toBe(
-      'https://app.test/map?demo=1&klipp=aaaaaaaa.x7k2#/x?demo=1',
-    );
+  it('keeps the parameters it is told to keep', () => {
+    const page = 'https://app.test/map?demo=1&person=Ola&klipp=old#/x?demo=1&q=Kari';
+    expect(redactedUrl(page, ['demo'])).toBe('https://app.test/map?demo=1&person=…#/x?demo=1&q=…');
   });
 });
 
 describe('deepLink', () => {
   it('drops the query, keeps the route, and adds the id', () => {
-    expect(deepLink(env.href, 'aaaaaaaa.x7k2')).toBe(
+    expect(deepLink(href, 'aaaaaaaa.x7k2')).toBe(
       'https://app.test/people/42?klipp=aaaaaaaa.x7k2#/incident/7',
+    );
+  });
+
+  it('keeps the parameters it is told to keep', () => {
+    const page = 'https://app.test/map?demo=1&person=Ola#/x?demo=1&q=Kari';
+    expect(deepLink(page, 'aaaaaaaa.x7k2', ['demo'])).toBe(
+      'https://app.test/map?demo=1&klipp=aaaaaaaa.x7k2#/x?demo=1',
     );
   });
 });
 
-describe('buildReport', () => {
-  document.body.innerHTML = `<button ${HOST_ATTR}="aaaaaaaa" aria-label="Delete Kari">Delete Kari Nordmann</button>`;
+describe('issueFooter', () => {
+  document.body.innerHTML = `<button ${HOST_ATTR}="aaaaaaaa">Delete Kari Nordmann</button>`;
   const button = document.querySelector('button')!;
   const identity = { ...identify(button), ancestry: { callSites: ['bbbbbbbb'], keys: [] } };
+  const input = { identity, facts, manifest, href, browser: 'TestBrowser/1, 1280×800' };
 
-  it('links the code at the build commit and leaves on-screen text out by default', () => {
-    const text = buildReport({ identity, manifest, facts, note: 'Stays disabled', env });
-    expect(text).toContain('### Klipp: `<button>` in `Button`');
-    expect(text).toContain('> Stays disabled');
+  it('links the code at the build commit and leaves on-screen text out', () => {
+    const text = issueFooter(input);
     expect(text).toContain(
       '[src/Button.tsx:4:10](https://github.com/acme/app/blob/0123456789abcdef0123456789abcdef01234567/src/Button.tsx#L4)',
     );
     expect(text).toContain('`<Button>` in [src/Toolbar.tsx:9:7]');
     expect(text).toContain('(changed locally)');
+    expect(text).toContain('| State | disabled |');
     expect(text).toContain(
       '[acme/app@0123456](https://github.com/acme/app/commit/0123456789abcdef0123456789abcdef01234567), with local changes',
     );
-    expect(text).toContain(`<sub>klipp:aaaaaaaa</sub>`);
+    expect(text).toContain('<sub>klipp:aaaaaaaa</sub>');
     expect(text).not.toMatch(/Kari|Nordmann|Ola/);
   });
 
-  it('includes the text when the reporter opts in', () => {
-    const text = buildReport({
-      identity,
-      manifest,
-      facts,
-      note: '',
-      text: visibleText(button),
-      env,
-    });
-    expect(text).toContain('aria-label: Delete Kari');
-    expect(text).toContain('Delete Kari Nordmann');
-  });
-
-  it('works without a manifest', () => {
-    const text = buildReport({ identity, manifest: undefined, facts, note: '', env });
-    expect(text).toContain('### Klipp: `<button>`');
-    expect(text).toContain('| Build | unknown |');
-  });
-});
-
-describe('visibleText', () => {
-  it('never reads form values', () => {
-    document.body.innerHTML = '<input type="password" placeholder="Password" value="hunter2">';
-    const input = document.querySelector('input')!;
-    expect(visibleText(input)).toEqual(['placeholder: Password']);
+  it('describes just the page when no element was picked', () => {
+    const text = issueFooter({ ...input, identity: undefined, facts: undefined });
+    expect(text).not.toContain('| Element |');
+    expect(text).toContain('| Page |');
+    expect(text).not.toContain('klipp:');
   });
 });

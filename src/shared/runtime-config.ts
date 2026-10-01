@@ -14,4 +14,10 @@ export interface RuntimeConfig {
   launcherUnderAutomation: boolean;
   /** Query parameters kept with their values in reports and links. */
   keepQuery: string[];
+  /** Base address of the chat and issue endpoints, ending in `/`. */
+  endpoint: string;
+  /** Whether a chat server is expected; without one Klipp still points and links. */
+  chat: boolean;
+  /** Pixels in from the corner. */
+  offset: { x: number; y: number };
 }

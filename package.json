@@ -1,7 +1,7 @@
 {
   "name": "klipp",
-  "version": "0.1.0",
-  "description": "A debugging sidekick for web apps: point at any element and get a stable ID that links to the code that rendered it.",
+  "version": "0.2.0",
+  "description": "A paperclip that lives in your web app while you build it: point at what looks wrong, and it reads the code behind it and files the GitHub issue.",
   "license": "MIT",
   "author": "Per-Arne Andersen",
   "type": "module",
@@ -46,6 +46,7 @@
     "prepare": "npm run build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@babel/parser": "^7.29.7",
     "magic-string": "^0.30.21"
   },

@@ -1,5 +1,16 @@
 import { expect, test } from '@playwright/test';
-import { COMMIT, banner, clipboard, idOf, launcher, openPicker, panel, pick } from './helpers.js';
+import {
+  ask,
+  chat,
+  chip,
+  figure,
+  hint,
+  idOf,
+  input,
+  openChat,
+  pointAt,
+  replies,
+} from './helpers.js';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('./');
@@ -10,22 +21,6 @@ test('every element written in the app carries a source id', async ({ page }) =>
   const rows = await page.locator('li').evaluateAll((els) => els.map((el) => el.dataset.klipp));
   expect(rows).toHaveLength(3);
   expect(new Set(rows).size).toBe(1);
-});
-
-test('picking names the code without the page reacting', async ({ page }) => {
-  await pick(page, page.getByRole('button', { name: 'Count' }));
-  await expect(page.getByTestId('clicks')).toHaveText('Clicks: 0');
-  const dialog = panel(page);
-  await expect(dialog).toContainText('<button> in Button');
-  await expect(
-    dialog.getByRole('link', { name: 'examples/react-app/src/Button.tsx:5:5' }),
-  ).toHaveAttribute(
-    'href',
-    `https://github.com/example/app/blob/${COMMIT}/examples/react-app/src/Button.tsx#L5`,
-  );
-  await expect(
-    dialog.getByRole('link', { name: 'examples/react-app/src/App.tsx:22:11' }),
-  ).toBeVisible();
 });
 
 test('one component used twice gets two ids from one code site', async ({ page }) => {
@@ -44,16 +39,86 @@ test('a list row keeps its id when the list reorders', async ({ page }) => {
   expect(await idOf(page.locator('li', { hasText: 'Alpha' }))).not.toBe(before);
 });
 
-test('a Klipp link opens the page on the same element', async ({ page }) => {
-  await pick(page, page.locator('li', { hasText: 'Beta' }).locator('span'));
-  const id = (await panel(page).getByTestId('klipp-id').textContent())!;
-  await panel(page).getByRole('button', { name: 'Copy link' }).click();
-  const link = await clipboard(page);
-  expect(link).toContain(`?klipp=${encodeURIComponent(id)}`);
+test('the paperclip opens a chat that answers', async ({ page }) => {
+  await openChat(page);
+  await expect(replies(page).first()).toContainText("Hi, I'm Klipp!");
+  await ask(page, 'hello');
+  await expect(chat(page).locator('.msg.user')).toHaveText('hello');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+});
 
-  await page.goto(link);
-  await expect(panel(page)).toContainText('Opened from a Klipp link.');
-  await expect(panel(page).getByTestId('klipp-id')).toHaveText(id);
+test('Klipp asks you to point, then reads the code behind it', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'the button is broken');
+  await expect(hint(page)).toContainText('Click the button you mean.');
+  await expect(chat(page)).toBeHidden();
+  await page.getByRole('button', { name: 'Count' }).click({ force: true });
+  await expect(page.getByTestId('clicks')).toHaveText('Clicks: 0');
+  await expect(chat(page).locator('.activity')).toHaveText(
+    'Reading examples/react-app/src/Button.tsx',
+  );
+  await expect(replies(page).last()).toHaveText(
+    'I read it: <button type="button" className="btn" onClick={onClick}>',
+  );
+});
+
+test('after pointing, the next message is about that element', async ({ page }) => {
+  await openChat(page);
+  await pointAt(page, page.getByRole('button', { name: 'Count' }));
+  await expect(chip(page)).toContainText('<button> in Button');
+  await ask(page, 'what is this?');
+  await expect(replies(page).last()).toHaveText('You pointed at <button> in Button.');
+  await expect(chip(page)).toBeHidden();
+});
+
+test('the model is told why a covered, disabled button cannot be pressed', async ({ page }) => {
+  await openChat(page);
+  await pointAt(page, page.getByRole('button', { name: 'Save' }));
+  await ask(page, 'describe it');
+  await expect(replies(page).last()).toContainText('div; states: none; beneath: button');
+
+  const save = await idOf(page.getByRole('button', { name: 'Save' }));
+  await page.goto(`./?klipp=${save}`);
+  await expect(chip(page)).toContainText('<button> in App');
+  await ask(page, 'describe it');
+  await expect(replies(page).last()).toContainText(
+    /button; states: disabled, clicks at its centre land on <div> [0-9a-z]{8}\.[0-9a-z]{4}/,
+  );
+});
+
+test('issues are filed only when you say so', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'please report this');
+  const card = chat(page).locator('.card');
+  await expect(card).toContainText('Count does nothing');
+  await card.getByRole('button', { name: 'Not now' }).click();
+  await expect(replies(page).last()).toHaveText("OK, I won't file it.");
+
+  await ask(page, 'report it after all');
+  const second = chat(page).locator('.card').last();
+  await second.getByRole('button', { name: 'File issue' }).click();
+  await expect(second.getByRole('link')).toHaveAttribute(
+    'href',
+    /^https:\/\/github\.com\/example\/app\/issues\/\d+$/,
+  );
+  await expect(replies(page).last()).toHaveText('Filed! 📎');
+});
+
+test('a model failure shows up in the chat', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'break please');
+  await expect(replies(page).last()).toContainText('the test model broke on purpose');
+  await ask(page, 'hello again');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+});
+
+test('a Klipp link opens the chat on that element', async ({ page }) => {
+  const id = await idOf(page.locator('li', { hasText: 'Beta' }));
+  await page.goto(`./?klipp=${id}`);
+  await expect(replies(page).last()).toContainText(
+    'This is the element from the link: <li> in App',
+  );
+  await expect(chip(page)).toContainText('<li> in App');
   expect(await page.evaluate((text) => window.klipp!.find(text)?.textContent, id)).toBe('Beta');
 });
 
@@ -61,89 +126,54 @@ test('a Klipp link that arrives by client-side navigation is followed too', asyn
   // As when an app sends the user through sign-in and back with history.pushState.
   const id = await idOf(page.getByRole('button', { name: 'Reverse' }));
   await page.evaluate((text) => history.pushState({}, '', `?klipp=${text}`), id);
-  await expect(panel(page).getByTestId('klipp-id')).toHaveText(id);
-});
-
-test('the report links the code and leaves on-screen text out unless asked', async ({ page }) => {
-  await pick(page, page.locator('li', { hasText: 'Beta' }).locator('span'));
-  const dialog = panel(page);
-  await dialog.getByRole('textbox', { name: 'What looks wrong?' }).fill('Wrong unit name');
-  await dialog.getByRole('button', { name: 'Copy report' }).click();
-  await expect(dialog.getByRole('status')).toHaveText(/Report copied/);
-  const report = await clipboard(page);
-  expect(report).toContain('### Klipp: `<span>` in `App`');
-  expect(report).toContain('> Wrong unit name');
-  expect(report).toContain(
-    `https://github.com/example/app/blob/${COMMIT}/examples/react-app/src/App.tsx#L`,
-  );
-  expect(report).not.toContain('Beta');
-
-  await dialog.getByRole('checkbox', { name: /Include the element's text/ }).check();
-  await dialog.getByRole('button', { name: 'Copy report' }).click();
-  await expect.poll(() => clipboard(page)).toContain('Beta');
-});
-
-test('a covered, disabled button says why it cannot be pressed', async ({ page }) => {
-  await pick(page, page.getByRole('button', { name: 'Save' }));
-  const dialog = panel(page);
-  await expect(dialog).toContainText('<div> in App');
-  await dialog.getByRole('button', { name: 'Beneath' }).click();
-  await expect(dialog).toContainText('<button> in App');
-  await expect(dialog).toContainText('disabled');
-  await expect(dialog).toContainText(/clicks at its centre land on <div> [0-9a-z]{8}\.[0-9a-z]{4}/);
+  await expect(chip(page)).toContainText('<button> in Button');
 });
 
 test('arrow keys walk to the parent before picking', async ({ page }) => {
-  await openPicker(page);
+  await openChat(page);
+  await chat(page).getByRole('button', { name: 'Point at something' }).click();
   await page.locator('li', { hasText: 'Beta' }).locator('span').hover({ force: true });
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
-  await expect(panel(page)).toContainText('<li> in App');
+  await expect(chip(page)).toContainText('<li> in App');
 });
 
-test('what is under the banner can still be picked, and Cancel still works', async ({ page }) => {
-  await openPicker(page);
-  const box = (await banner(page).boundingBox())!;
-  await page.mouse.move(box.x + 40, box.y + box.height / 2);
-  await expect(banner(page)).toHaveClass(/faded/);
-  await page.mouse.down();
-  await page.mouse.up();
-  await expect(panel(page)).toBeVisible();
-
-  await page.keyboard.press('Escape');
-  await openPicker(page);
-  await banner(page).getByRole('button', { name: 'Cancel' }).click();
-  await expect(banner(page)).toBeHidden();
+test('what is under the pointing hint can still be picked', async ({ page }) => {
+  await openChat(page);
+  await chat(page).getByRole('button', { name: 'Point at something' }).click();
+  const box = (await hint(page).boundingBox())!;
+  await page.mouse.click(box.x + 20, box.y + box.height / 2);
+  await expect(chip(page)).toBeVisible();
 });
 
 test('every mode can be left, and the page works normally after', async ({ page }) => {
-  await openPicker(page);
+  await openChat(page);
   await page.keyboard.press('Escape');
-  await expect(banner(page)).toBeHidden();
+  await expect(chat(page)).toBeHidden();
 
-  await openPicker(page);
   await page.keyboard.press('Alt+Shift+KeyK');
-  await expect(banner(page)).toBeHidden();
+  await expect(chat(page)).toBeVisible();
+  await expect(input(page)).toBeFocused();
+  await page.keyboard.press('Alt+Shift+KeyK');
+  await expect(chat(page)).toBeHidden();
 
-  await openPicker(page);
-  await banner(page).getByRole('button', { name: 'Cancel' }).click();
-  await expect(banner(page)).toBeHidden();
-
-  await pick(page, page.locator('h1'));
+  await openChat(page);
+  await chat(page).getByRole('button', { name: 'Point at something' }).click();
   await page.keyboard.press('Escape');
-  await expect(panel(page)).toBeHidden();
+  await expect(hint(page)).toBeHidden();
+  await expect(chat(page)).toBeVisible();
 
-  await pick(page, page.locator('h1'));
-  await panel(page).getByRole('button', { name: 'Close' }).click();
-  await expect(panel(page)).toBeHidden();
+  await chat(page).getByRole('button', { name: 'Point at something' }).click();
+  await hint(page).getByRole('button', { name: 'Cancel' }).click();
+  await expect(chat(page)).toBeVisible();
+
+  await chat(page).getByRole('button', { name: 'Point at something' }).click();
+  await figure(page).click();
+  await expect(hint(page)).toBeHidden();
+
+  await chat(page).getByRole('button', { name: 'Close' }).click();
+  await expect(chat(page)).toBeHidden();
 
   await page.getByRole('button', { name: 'Count' }).click();
   await expect(page.getByTestId('clicks')).toHaveText('Clicks: 1');
-});
-
-test('the paperclip starts and stops picking', async ({ page }) => {
-  await launcher(page).click();
-  await expect(banner(page)).toBeVisible();
-  await launcher(page).click();
-  await expect(banner(page)).toBeHidden();
 });

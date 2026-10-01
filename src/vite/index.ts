@@ -1,13 +1,29 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { normalizePath, type Plugin, type ResolvedConfig } from 'vite';
+import { loadEnv, normalizePath, type Plugin, type ResolvedConfig } from 'vite';
+import { createKlippMiddleware } from '../server/handler.js';
+import type { Effort, Turn } from '../server/llm.js';
 import type { KlippManifest, ManifestEntry } from '../shared/manifest.js';
+import type { IssueDraft } from '../shared/protocol.js';
 import type { Corner, RuntimeConfig } from '../shared/runtime-config.js';
 import { dirtyFiles, readGit, type GitInfo } from './git.js';
 import { stamp } from './stamp.js';
 
-export type { KlippManifest, ManifestEntry, RuntimeConfig, Corner };
+export type { KlippManifest, ManifestEntry, RuntimeConfig, Corner, Effort, Turn, IssueDraft };
+
+export interface ChatOptions {
+  /** Default: `claude-opus-5-5`. */
+  model?: string;
+  /** Default: `medium`. */
+  effort?: Effort;
+  /** Answer chat requests from other machines too, such as a phone on the LAN. Default: false. */
+  allowRemote?: boolean;
+  /** Replaces the model, as the tests do. */
+  turn?: Turn;
+  /** Replaces filing on GitHub, as the tests do. Returns the issue's address. */
+  fileIssue?: (draft: IssueDraft) => Promise<string>;
+}
 
 export interface KlippOptions {
   /**
@@ -27,8 +43,10 @@ export interface KlippOptions {
   commit?: string;
   /** Default: `alt+shift+k`. */
   hotkey?: string;
-  /** Where the character sits. Default: `bottom-right`; `false` leaves only the hotkey. */
+  /** Where the paperclip sits. Default: `bottom-right`; `false` leaves only the hotkey. */
   launcher?: Corner | false;
+  /** Moves the paperclip in from its corner, in pixels, to clear things the app keeps there. */
+  offset?: { x?: number; y?: number };
   /** Show the character in browsers driven by automation too. Default: false. */
   launcherUnderAutomation?: boolean;
   /**
@@ -36,10 +54,17 @@ export interface KlippOptions {
    * values in reports and Klipp links; every other query value is blanked. Default: none.
    */
   keepQuery?: string[];
+  /**
+   * The chat, served by the dev server (and `vite preview`) so the API key stays on your
+   * machine. It reads `ANTHROPIC_API_KEY` from the environment or `.env` files, and files
+   * issues with `gh`'s login or `GITHUB_TOKEN`. `false` turns it off.
+   */
+  chat?: ChatOptions | false;
 }
 
 const ENTRY = '/@klipp/entry';
 const RESOLVED_ENTRY = '\0klipp-entry';
+const ENDPOINT = '@klipp/';
 const DEV_MANIFEST = '@klipp/manifest.json';
 const BUILD_MANIFEST = 'klipp-manifest.json';
 
@@ -69,6 +94,7 @@ export default function klipp(options: KlippOptions = {}): Plugin {
   let enabled = false;
   let git: GitInfo = {};
   let dirty: { at: number; files: string[] } | undefined;
+  let middleware: ReturnType<typeof createKlippMiddleware> | undefined;
 
   const repoPath = (file: string) =>
     relative(git.toplevel ?? config.root, file)
@@ -123,7 +149,29 @@ export default function klipp(options: KlippOptions = {}): Plugin {
       launcher: options.launcher ?? 'bottom-right',
       launcherUnderAutomation: options.launcherUnderAutomation ?? false,
       keepQuery: options.keepQuery ?? [],
+      endpoint: `${config.base}${ENDPOINT}`,
+      chat: options.chat !== false,
+      offset: { x: options.offset?.x ?? 0, y: options.offset?.y ?? 0 },
     };
+  }
+
+  /** One middleware for both servers; it serves the manifest only under development. */
+  function klippMiddleware() {
+    if (middleware) return middleware;
+    const chat = options.chat === false ? undefined : (options.chat ?? {});
+    const envDir = typeof config.envDir === 'string' ? config.envDir : config.root;
+    const env = loadEnv(config.mode, envDir, ['ANTHROPIC_', 'KLIPP_', 'GITHUB_TOKEN', 'GH_TOKEN']);
+    const repo = options.repo ?? git.repo;
+    middleware = createKlippMiddleware({
+      root: git.toplevel ?? config.root,
+      env,
+      ...(repo ? { repo } : {}),
+      ...(config.command === 'serve' ? { manifest: () => manifest(true) } : {}),
+      ...(env.ANTHROPIC_API_KEY ? { apiKey: env.ANTHROPIC_API_KEY } : {}),
+      ...chat,
+      ...(chat ? {} : { turn: async () => ({ content: [], stop_reason: 'end_turn' as const }) }),
+    });
+    return middleware;
   }
 
   return {
@@ -141,13 +189,11 @@ export default function klipp(options: KlippOptions = {}): Plugin {
     },
 
     configureServer(server) {
-      if (!enabled) return;
-      server.middlewares.use((req, res, next) => {
-        if (!req.url?.split('?', 1)[0]!.endsWith(`/${DEV_MANIFEST}`)) return next();
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Cache-Control', 'no-store');
-        res.end(JSON.stringify(manifest(true)));
-      });
+      if (enabled) server.middlewares.use(klippMiddleware());
+    },
+
+    configurePreviewServer(server) {
+      if (enabled) server.middlewares.use(klippMiddleware());
     },
 
     resolveId(id) {

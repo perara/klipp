@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from '../shared/runtime-config.js';
+import { startCapture } from './capture.js';
 import { identify, resolve } from './identify.js';
 import type { KlippApp } from './ui/app.js';
 
@@ -55,9 +56,10 @@ export function matchesHotkey(event: KeyboardEvent, hotkey: Hotkey): boolean {
   return event.key.toLowerCase() === hotkey.key;
 }
 
-/** Installs the hotkey, the deep-link handler and the character. The UI itself loads on first use. */
+/** Installs the hotkey, the deep-link handler and the paperclip. The UI itself loads on first use. */
 export function start(config: RuntimeConfig): void {
   if (typeof window === 'undefined' || window.klipp) return;
+  startCapture();
   let loading: Promise<KlippApp> | undefined;
   const app = () => (loading ??= import('./ui/app.js').then((m) => m.createApp(config)));
   window.klipp = {
@@ -73,7 +75,7 @@ export function start(config: RuntimeConfig): void {
       if (!matchesHotkey(event, hotkey)) return;
       event.preventDefault();
       event.stopPropagation();
-      void app().then((a) => a.togglePicker());
+      void app().then((a) => a.toggle());
     },
     true,
   );
@@ -95,7 +97,7 @@ export function start(config: RuntimeConfig): void {
 
   const automated = navigator.webdriver && !config.launcherUnderAutomation;
   if (config.launcher && !automated) {
-    const show = () => void app().then((a) => a.showLauncher());
+    const show = () => void app().then((a) => a.showFigure());
     if ('requestIdleCallback' in window) window.requestIdleCallback(show, { timeout: 2000 });
     else setTimeout(show, 300);
   }
