@@ -4,3 +4,4 @@ examples/*/dist/
 test-results/
 playwright-report/
 *.log
+klipp-*.tgz
