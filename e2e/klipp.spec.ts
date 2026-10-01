@@ -146,6 +146,18 @@ test('what is under the pointing hint can still be picked', async ({ page }) => 
   await expect(chip(page)).toBeVisible();
 });
 
+test("typing and pointing in Klipp never reach the page's own listeners", async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'hello');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+  await input(page).press('Backspace');
+  await pointAt(page, page.getByRole('button', { name: 'Count' }));
+  await expect(page.getByTestId('page-events')).toHaveText('Page events: 0');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Reverse' }).click();
+  await expect(page.getByTestId('page-events')).not.toHaveText('Page events: 0');
+});
+
 test('every mode can be left, and the page works normally after', async ({ page }) => {
   await openChat(page);
   await page.keyboard.press('Escape');

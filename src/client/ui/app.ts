@@ -59,6 +59,29 @@ function waitFor<T>(find: () => T | undefined, timeout: number): Promise<T | und
   });
 }
 
+const ISOLATED_EVENTS = [
+  'keydown',
+  'keyup',
+  'keypress',
+  'beforeinput',
+  'input',
+  'paste',
+  'copy',
+  'cut',
+  'pointerdown',
+  'pointerup',
+  'mousedown',
+  'mouseup',
+  'click',
+  'dblclick',
+  'contextmenu',
+  'touchstart',
+  'touchend',
+  'wheel',
+  'focusin',
+  'focusout',
+] as const;
+
 function mount(config: RuntimeConfig, chat: ChatView, figure: Figure) {
   const host = document.createElement('klipp-root');
   const pinned: Array<[string, string]> = [
@@ -85,6 +108,11 @@ function mount(config: RuntimeConfig, chat: ChatView, figure: Figure) {
   layer.style.setProperty('--dx', `${config.offset.x}px`);
   layer.style.setProperty('--dy', `${config.offset.y}px`);
   layer.append(glass, chat.element, hint, figure.button);
+  // What happens in Klipp stays in Klipp. Events from inside a shadow root reach the page
+  // looking as if they came from <klipp-root>, so a page's "is the user typing?" check fails:
+  // Backspace in the chat would undo a drawing, a press on the glass would close a popover.
+  for (const type of ISOLATED_EVENTS)
+    layer.addEventListener(type, (event) => event.stopPropagation());
   shadow.append(layer);
   document.documentElement.append(host);
   return { host, layer, glass, hint, hintText, cancel };

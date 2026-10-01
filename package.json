@@ -1,6 +1,6 @@
 {
   "name": "klipp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A paperclip that lives in your web app while you build it: point at what looks wrong, and it reads the code behind it and files the GitHub issue.",
   "license": "MIT",
   "author": "Per-Arne Andersen",

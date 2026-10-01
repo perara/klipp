@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from './Button';
 
 const UNITS = [
@@ -10,6 +10,16 @@ const UNITS = [
 export function App() {
   const [clicks, setClicks] = useState(0);
   const [units, setUnits] = useState(UNITS);
+  // Page-wide listeners, as apps have for shortcuts and "click outside": Klipp must not reach them.
+  const [pageEvents, setPageEvents] = useState(0);
+  useEffect(() => {
+    const count = () => setPageEvents((n) => n + 1);
+    const types = ['keydown', 'pointerdown', 'paste'] as const;
+    for (const type of types) document.addEventListener(type, count);
+    return () => {
+      for (const type of types) document.removeEventListener(type, count);
+    };
+  }, []);
   return (
     <main className="page">
       <h1>Klipp example</h1>
@@ -18,6 +28,7 @@ export function App() {
       </p>
       <section className="card">
         <p data-testid="clicks">Clicks: {clicks}</p>
+        <p data-testid="page-events">Page events: {pageEvents}</p>
         <div className="row">
           <Button onClick={() => setClicks((n) => n + 1)}>Count</Button>
           <Button onClick={() => setUnits((list) => [...list].reverse())}>Reverse</Button>
