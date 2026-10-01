@@ -1,0 +1,43 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  background: Canvas;
+  color: CanvasText;
+}
+body {
+  margin: 0;
+}
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 120px;
+}
+.card {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 12px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+.btn,
+.stack button {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 30%, transparent);
+  font: inherit;
+}
+.units {
+  margin: 0;
+  padding-left: 20px;
+}
+.stack {
+  position: relative;
+  display: inline-block;
+}
+.veil {
+  position: absolute;
+  inset: -4px;
+}
