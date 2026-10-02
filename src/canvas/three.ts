@@ -148,8 +148,10 @@ export function threeTargets(options: ThreeOptions): CanvasAdapter {
       });
       return `${sid}:${found || 1}`;
     }
+    // Down from the root Klipp was given, which may be a group inside the scene.
+    const root = scene();
     const steps: string[] = [];
-    for (let node = object; node.parent; node = node.parent) {
+    for (let node = object; node !== root && node.parent; node = node.parent) {
       steps.unshift(node.name || `#${node.parent.children.indexOf(node)}`);
     }
     return steps.join('/');

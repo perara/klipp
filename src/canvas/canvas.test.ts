@@ -215,7 +215,7 @@ describe('threeTargets', () => {
       const p = new Vector3(x, y, z).project(camera);
       return { x: 100 + ((p.x + 1) / 2) * 400, y: 50 + ((1 - p.y) / 2) * 300 };
     };
-    return { scene, crate, unnamed, adapter, screen, canvas: canvasAt() };
+    return { scene, camera, crate, unnamed, adapter, screen, canvas: canvasAt() };
   }
 
   /** The viewport point where a world position lands on the 400×300 canvas at 100,50. */
@@ -269,6 +269,17 @@ describe('threeTargets', () => {
     expect(target.key).toBe('aaaaaaaa:1');
     expect(target.box!.x + target.box!.width / 2).toBeCloseTo(300, 0);
     expect(adapter.at(screen(-3, 2), canvas)?.key).toBe('trees:i1');
+  });
+
+  it('names objects from the root it is given, such as a content group inside the scene', async () => {
+    const { scene, screen, canvas, camera } = world();
+    const yard = scene.getObjectByName('yard')!;
+    const adapter = threeTargets({ scene: yard, camera, raycaster: new Raycaster() });
+    const side = adapter.at(screen(3, 0, 0.5), canvas)!;
+    expect(side.key).toBe('#1');
+    expect((await adapter.find!('#1', canvas))?.label).toBe('Mesh');
+    // Outside that root, nothing is seen.
+    expect(adapter.at(screen(-3, 2), canvas)).toBeUndefined();
   });
 
   it('finds objects again by their keys, and not hidden ones', async () => {
