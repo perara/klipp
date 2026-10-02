@@ -13,7 +13,9 @@ behaviour or options.
   MapLibre GL (`maplibreTargets`: the topmost rendered feature, by layer and id, property values
   only when named in `reveal`) and three.js (`threeTargets`: the nearest visible object, by its
   name down the scene graph, instanced meshes by instance). The chat, the agent's context, the
-  ticket and links all name the feature or object; an ID names it with `@key`.
+  ticket and links all name the feature or object; an ID names it with `@key`. A canvas can
+  carry several adapters, asked newest first, such as a three.js layer drawn over a MapLibre
+  map, whose hand-set camera the three.js adapter aims through.
 - react-three-fiber objects (`<mesh>`, `<group>` and the like) carry where they are written, as
   `userData.klipp`, so pointing at a 3D object leads to its JSX.
 - Web components: Klipp points into open shadow roots, an ID steps into one with `s`, and the

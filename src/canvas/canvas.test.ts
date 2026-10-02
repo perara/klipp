@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import {
   BoxGeometry,
+  Camera,
   Vector3,
   Group,
   InstancedMesh,
@@ -58,6 +59,26 @@ describe('registerCanvas', () => {
       Symbol.for('klipp.canvases')
     ];
     expect(shared?.has(canvas)).toBe(true);
+  });
+
+  it('asks the layer registered last first, as a 3D layer drawn over a map', async () => {
+    const canvas = canvasAt();
+    const target = (key: string) => ({ key, label: key });
+    registerCanvas(canvas, {
+      at: () => target('map'),
+      find: (key) => (key === 'roads:1' ? target(key) : undefined),
+    });
+    const undo = registerCanvas(canvas, {
+      at: (point) => (point.x < 200 ? target('tree') : undefined),
+      find: (key) => (key === 'trees:i3' ? target(key) : undefined),
+    });
+    const { adapter } = canvasAdapterFor(canvas)!;
+    expect(adapter.at({ x: 150, y: 100 }, canvas)?.key).toBe('tree');
+    expect(adapter.at({ x: 300, y: 100 }, canvas)?.key).toBe('map');
+    expect((await adapter.find!('roads:1', canvas))?.key).toBe('roads:1');
+    expect((await adapter.find!('trees:i3', canvas))?.key).toBe('trees:i3');
+    undo();
+    expect(canvasAdapterFor(canvas)!.adapter.at({ x: 150, y: 100 }, canvas)?.key).toBe('map');
   });
 });
 
@@ -229,6 +250,25 @@ describe('threeTargets', () => {
       label: 'Mesh "trees", instance 1',
       details: { instance: 1 },
     });
+  });
+
+  it('aims through a camera whose projection is set by hand, as a MapLibre layer does', () => {
+    const { scene, screen, canvas } = world();
+    const perspective = new PerspectiveCamera(50, 400 / 300, 0.1, 100);
+    perspective.position.set(0, 0, 10);
+    perspective.lookAt(0, 0, 0);
+    perspective.updateMatrixWorld();
+    // One matrix for projection and view, and an identity world matrix: the custom-layer way.
+    const handSet = new Camera();
+    handSet.projectionMatrix.multiplyMatrices(
+      perspective.projectionMatrix,
+      perspective.matrixWorldInverse,
+    );
+    const adapter = threeTargets({ scene, camera: handSet, raycaster: new Raycaster() });
+    const target = adapter.at(screen(0, 0), canvas)!;
+    expect(target.key).toBe('aaaaaaaa:1');
+    expect(target.box!.x + target.box!.width / 2).toBeCloseTo(300, 0);
+    expect(adapter.at(screen(-3, 2), canvas)?.key).toBe('trees:i1');
   });
 
   it('finds objects again by their keys, and not hidden ones', async () => {

@@ -177,6 +177,10 @@ registerCanvas(map.getCanvas(), maplibreTargets(map, { layers: ['incidents'], re
 registerCanvas(renderer.domElement, threeTargets({ scene, camera, raycaster: new Raycaster() }));
 ```
 
+A canvas can carry several, like the layers it draws; the one registered last is asked first.
+A three.js layer drawn inside a MapLibre map registers on the map's canvas after the map, and
+its hand-set camera works as it is.
+
 With react-three-fiber, register inside `<Canvas>`. Klipp's build also stamps each `<mesh>`,
 `<group>` and the like with where it is written, so pointing at a 3D object leads to its JSX:
 

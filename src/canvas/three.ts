@@ -8,8 +8,19 @@ export interface Vector3Like {
   z: number;
   clone(): Vector3Like;
   set(x: number, y: number, z: number): Vector3Like;
+  sub(other: Vector3Like): Vector3Like;
+  normalize(): Vector3Like;
   applyMatrix4(matrix: unknown): Vector3Like;
   project(camera: unknown): Vector3Like;
+  unproject(camera: unknown): Vector3Like;
+}
+
+/** The parts of a three.js camera Klipp uses. */
+interface CameraLike {
+  isPerspectiveCamera?: boolean;
+  isOrthographicCamera?: boolean;
+  projectionMatrix?: unknown;
+  projectionMatrixInverse?: { copy(matrix: unknown): { invert(): unknown } };
 }
 
 interface Matrix4Like {
@@ -46,12 +57,17 @@ export interface Intersection {
 export interface RaycasterLike {
   setFromCamera(coords: { x: number; y: number }, camera: unknown): void;
   intersectObjects(objects: Object3DLike[], recursive?: boolean): Intersection[];
+  ray?: { origin: Vector3Like; direction: Vector3Like };
+  camera?: unknown;
 }
 
 export interface ThreeOptions {
   /** The scene, or a function returning it when it can change. */
   scene: Object3DLike | (() => Object3DLike);
-  /** The camera, or a function returning it when it can change. */
+  /**
+   * The camera, or a function returning it when it can change. A camera whose projection
+   * matrix is set by hand, as in a MapLibre custom layer, works too.
+   */
   camera: unknown;
   /** A `new THREE.Raycaster()`; a react-three-fiber app can pass its own `raycaster`. */
   raycaster: RaycasterLike;
@@ -97,6 +113,25 @@ function walk(root: Object3DLike, visit: (object: Object3DLike) => void) {
 export function threeTargets(options: ThreeOptions): CanvasAdapter {
   const scene = () => call(options.scene);
   const camera = () => call(options.camera);
+
+  /** Points the raycaster through a spot on the canvas, given in normalised device coordinates. */
+  function aim(ndc: { x: number; y: number }) {
+    const view = camera() as CameraLike;
+    const { raycaster } = options;
+    const custom = !view.isPerspectiveCamera && !view.isOrthographicCamera;
+    if (!custom || !raycaster.ray || !view.projectionMatrixInverse) {
+      raycaster.setFromCamera(ndc, view);
+      return;
+    }
+    // `setFromCamera` knows only perspective and orthographic cameras. Any other has its
+    // projection set by hand, often without its inverse: unproject the spot at the near and
+    // far planes instead.
+    view.projectionMatrixInverse.copy(view.projectionMatrix).invert();
+    const { origin, direction } = raycaster.ray;
+    origin.set(ndc.x, ndc.y, -1).unproject(view);
+    direction.set(ndc.x, ndc.y, 1).unproject(view).sub(origin).normalize();
+    raycaster.camera = view;
+  }
 
   /** A stable name: `sid:n` for stamped objects, else names (or `#index`) down from the scene. */
   function keyOf(object: Object3DLike): string {
@@ -217,7 +252,7 @@ export function threeTargets(options: ThreeOptions): CanvasAdapter {
         x: ((point.x - frame.left) / frame.width) * 2 - 1,
         y: -((point.y - frame.top) / frame.height) * 2 + 1,
       };
-      options.raycaster.setFromCamera(ndc, camera());
+      aim(ndc);
       const hit = options.raycaster
         .intersectObjects(scene().children, true)
         .find((h) => visible(h.object) && (options.filter?.(h.object) ?? true));
