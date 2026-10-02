@@ -1,29 +1,40 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { KlippManifest } from '../shared/manifest.js';
-import type { ChatEvent, ChatRequest, IssueDraft, IssueResponse } from '../shared/protocol.js';
-import { advance, Conversations } from './agent.js';
+import type {
+  AgentId,
+  AgentsResponse,
+  ChatEvent,
+  ChatRequest,
+  IssueDraft,
+  IssueResponse,
+  ToolResultRequest,
+} from '../shared/protocol.js';
+import { AGENTS, onPath } from './agents.js';
+import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
-import { anthropicTurn, type Effort, type Turn } from './llm.js';
-import { SourceAccess } from './source.js';
+import { McpBridge } from './mcp.js';
+import { PAGE_TOOLS } from './prompt.js';
 
 export interface KlippServerOptions {
-  /** The repository root the model may read. */
+  /** The repository root the agent works in, read-only. */
   root: string;
   /** Repository address for filing issues, such as `https://github.com/owner/repo`. */
   repo?: string;
   /** The manifest, served under development; a build serves its own file. */
   manifest?: () => KlippManifest;
+  /** Which agent to start with when both are installed. Default: Claude. */
+  agent?: AgentId;
+  /** Passed to the agent's `--model`/`-m`. */
   model?: string;
-  effort?: Effort;
-  apiKey?: string;
+  /** Replace an agent's command, as the tests do: the command and its leading arguments. */
+  commands?: Partial<Record<AgentId, string[]>>;
   /** Environment for the GitHub token lookup. */
   env?: Record<string, string | undefined>;
-  /** Replaces the model, as tests do. */
-  turn?: Turn;
   /** Replaces filing on GitHub, as tests do. Returns the issue's address. */
   fileIssue?: (draft: IssueDraft) => Promise<string>;
-  /** Answer requests from other machines too. Default: loopback only, since the key is yours. */
+  /** Answer requests from other machines too. Default: loopback only, since the agent runs as you. */
   allowRemote?: boolean;
+  version?: string;
 }
 
 type Next = (error?: unknown) => void;
@@ -57,22 +68,30 @@ function allowed(req: IncomingMessage, allowRemote: boolean): boolean {
   if (req.headers['x-klipp'] !== '1') return false;
   const origin = req.headers.origin;
   if (origin && new URL(origin).host !== req.headers.host) return false;
-  return (
-    req.headers['sec-fetch-site'] === undefined || req.headers['sec-fetch-site'] === 'same-origin'
-  );
+  const site = req.headers['sec-fetch-site'];
+  return site === undefined || site === 'same-origin';
 }
 
-/** Connect-style middleware for the chat, issue filing and (under development) the manifest. */
+/** Connect-style middleware: the chat, page-tool answers, issue filing, and (in development) the manifest. */
 export function createKlippMiddleware(options: KlippServerOptions) {
-  const source = new SourceAccess(options.root);
+  const bridge = new McpBridge(PAGE_TOOLS, options.version);
   const conversations = new Conversations();
-  const turn =
-    options.turn ??
-    anthropicTurn({
-      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.effort ? { effort: options.effort } : {}),
-    });
+  const command = (agent: AgentId) => options.commands?.[agent] ?? [AGENTS[agent].binary];
+
+  function agents(): AgentsResponse {
+    const list = (Object.keys(AGENTS) as AgentId[]).map((id) => ({
+      id,
+      label: AGENTS[id].label,
+      available: onPath(command(id)[0]!),
+    }));
+    const wanted = options.agent ?? 'claude';
+    const preferred =
+      list.find((a) => a.id === wanted && a.available)?.id ??
+      list.find((a) => a.available)?.id ??
+      wanted;
+    return { agents: list, preferred };
+  }
+
   const fileIssue =
     options.fileIssue ??
     (async (draft: IssueDraft) => {
@@ -85,21 +104,59 @@ export function createKlippMiddleware(options: KlippServerOptions) {
 
   async function chat(req: IncomingMessage, res: ServerResponse) {
     const request = (await readJson(req)) as ChatRequest;
-    const conversation = conversations.get(request.conversation);
+    if (!(request.agent in AGENTS) || typeof request.text !== 'string' || !request.page) {
+      return json(res, 400, { error: 'A chat message needs an agent, text and the page.' });
+    }
+    const conversation = conversations.get(request.conversation, request.agent);
     if (conversation.busy) return json(res, 409, { error: 'Klipp is still answering.' });
     conversation.busy = true;
+    await bridge.start();
     res.statusCode = 200;
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no');
-    const emit = (event: ChatEvent) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const aborted = new AbortController();
+    res.on('close', () => aborted.abort());
+    const emit = (event: ChatEvent) => {
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
     emit({ type: 'conversation', id: conversation.id });
     try {
-      await advance(conversation, request.input, { turn, source, emit });
+      if (!onPath(command(request.agent)[0]!)) {
+        const name = AGENTS[request.agent].binary;
+        emit({
+          type: 'error',
+          message: `I can't find \`${name}\` on this machine. Install it and log in, then restart the dev server.`,
+        });
+        return;
+      }
+      await runTurn(conversation, request.text, request.page, {
+        agent: AGENTS[request.agent],
+        command: command(request.agent),
+        root: options.root,
+        bridge,
+        ...(options.model ? { model: options.model } : {}),
+        emit,
+        signal: aborted.signal,
+      });
     } finally {
       conversation.busy = false;
       res.end();
     }
+  }
+
+  async function toolResult(req: IncomingMessage, res: ServerResponse) {
+    const result = (await readJson(req)) as ToolResultRequest;
+    const conversation = conversations.find(String(result.conversation));
+    const delivered =
+      conversation !== undefined &&
+      typeof result.content === 'string' &&
+      answerTool(conversation, {
+        id: String(result.id),
+        content: result.content,
+        ...(result.isError ? { isError: true } : {}),
+      });
+    json(res, delivered ? 200 : 404, { delivered });
   }
 
   async function issue(req: IncomingMessage, res: ServerResponse) {
@@ -118,17 +175,26 @@ export function createKlippMiddleware(options: KlippServerOptions) {
     }
   }
 
+  const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
+    chat,
+    'tool-result': toolResult,
+    issue,
+  };
+
   return (req: IncomingMessage, res: ServerResponse, next: Next) => {
     const path = (req.url ?? '').split('?', 1)[0]!;
-    if (!path.includes('/@klipp/')) return next();
-    if (path.endsWith('/@klipp/manifest.json') && req.method === 'GET' && options.manifest) {
+    const match = /\/@klipp\/([\w.-]+)$/.exec(path);
+    if (!match) return next();
+    const name = match[1]!;
+    if (req.method === 'GET' && name === 'manifest.json' && options.manifest) {
       return json(res, 200, options.manifest());
     }
-    const route = path.endsWith('/@klipp/chat')
-      ? chat
-      : path.endsWith('/@klipp/issue')
-        ? issue
-        : undefined;
+    if (req.method === 'GET' && name === 'agents') {
+      if (!allowed(req, options.allowRemote ?? false))
+        return json(res, 403, { error: 'Not allowed.' });
+      return json(res, 200, agents());
+    }
+    const route = routes[name];
     if (!route || req.method !== 'POST') return next();
     if (!allowed(req, options.allowRemote ?? false))
       return json(res, 403, { error: 'Not allowed.' });

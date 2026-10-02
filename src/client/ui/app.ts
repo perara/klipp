@@ -1,8 +1,14 @@
 import { HOST_ATTR } from '../../shared/id.js';
 import type { KlippManifest } from '../../shared/manifest.js';
-import type { ChatInput, ClientToolCall, ClientToolResult } from '../../shared/protocol.js';
+import type {
+  AgentId,
+  AgentInfo,
+  ClientToolCall,
+  ClientToolResult,
+  PageContext,
+} from '../../shared/protocol.js';
 import type { RuntimeConfig } from '../../shared/runtime-config.js';
-import { fileIssue, talk, Unreachable } from '../chat-client.js';
+import { answerTool, fileIssue, listAgents, talk, Unreachable } from '../chat-client.js';
 import { elementContext, pageContext, type Probe } from '../context.js';
 import { anchorOf, identify, resolve } from '../identify.js';
 import { loadManifest } from '../manifest.js';
@@ -129,6 +135,11 @@ export function createApp(config: RuntimeConfig): KlippApp {
   /** Whether the next message carries the subject. */
   let attached = false;
   let pendingCard: IssueCard | undefined;
+  /** What the user typed instead of answering the pending card. */
+  let typedInstead = '';
+  let agent: AgentId = 'claude';
+  let agents: AgentInfo[] = [];
+  let agentsLoaded: Promise<void> | undefined;
   let stopPicker: (() => void) | undefined;
   let cancelPicking: (() => void) | undefined;
 
@@ -141,6 +152,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
       chat.attach(undefined);
     },
     close: () => close(),
+    switchAgent: (id) => switchAgent(id),
   });
   const ui = mount(config, chat, figure);
   const overlay = new Overlay(ui.layer);
@@ -260,8 +272,8 @@ export function createApp(config: RuntimeConfig): KlippApp {
     });
   }
 
-  /** Answers a tool call that needs the page or the user; undefined when a new message overtook it. */
-  async function runTool(call: ClientToolCall): Promise<ClientToolResult | undefined> {
+  /** Answers a tool call that needs the page or the user, while the agent waits for it. */
+  async function runTool(call: ClientToolCall): Promise<ClientToolResult> {
     const { id, input } = call;
     if (call.name === 'point_at_element') {
       chat.reply(String(input.prompt));
@@ -286,9 +298,12 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
     const draft = { title: String(input.title), body: String(input.body) };
     const card = (pendingCard = chat.issue(draft));
+    figure.mood = 'idle';
     const decision = await card.decision;
     pendingCard = undefined;
-    if (decision === 'superseded') return undefined;
+    if (decision === 'superseded') {
+      return { id, content: `The user didn't file it, and wrote instead: ${typedInstead}` };
+    }
     if (decision === 'decline') {
       card.declined();
       return { id, content: 'The user decided not to file it.' };
@@ -308,26 +323,35 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
   }
 
-  async function exchange(input: ChatInput): Promise<void> {
+  /** One message: the agent runs in the background and its work streams in. */
+  async function exchange(text: string, page: PageContext): Promise<void> {
     busy = true;
     figure.mood = 'thinking';
     let reply: Reply | undefined;
-    let calls: ClientToolCall[] = [];
     let failed = false;
     try {
-      const request = conversation ? { conversation, input } : { input };
+      await agentsLoaded;
+      const request = { ...(conversation ? { conversation } : {}), agent, text, page };
       for await (const event of talk(config.endpoint, request)) {
         if (event.type === 'conversation') conversation = event.id;
         else if (event.type === 'text') {
           figure.mood = 'talking';
           (reply ??= chat.reply()).append(event.delta);
-        } else if (event.type === 'activity') {
+        } else if (event.type === 'break') reply = undefined;
+        else if (event.type === 'activity') {
           reply = undefined;
           figure.mood = 'thinking';
           chat.activity(event.label);
-        } else if (event.type === 'client_tools') calls = event.calls;
-        else if (event.type === 'error') {
+        } else if (event.type === 'client_tool') {
+          reply = undefined;
+          const answering = conversation!;
+          void runTool(event.call).then((result) => {
+            figure.mood = 'thinking';
+            return answerTool(config.endpoint, { conversation: answering, ...result });
+          });
+        } else if (event.type === 'error') {
           failed = true;
+          reply = undefined;
           chat.reply(event.message);
         }
       }
@@ -344,34 +368,73 @@ export function createApp(config: RuntimeConfig): KlippApp {
       busy = false;
     }
     figure.mood = failed ? 'sad' : 'idle';
-    if (!calls.length) return;
-    const results: ClientToolResult[] = [];
-    for (const call of calls) {
-      const result = await runTool(call);
-      if (!result) return;
-      results.push(result);
-    }
-    await exchange({ type: 'tool_results', results });
   }
 
   function send(text: string): boolean {
+    if (pendingCard) {
+      // The agent is waiting on the draft; what the user typed becomes the answer.
+      chat.user(text);
+      typedInstead = text;
+      pendingCard.supersede();
+      return true;
+    }
     if (busy) return false;
-    pendingCard?.supersede();
     chat.user(text);
     const carried = attached ? subject : undefined;
     attached = false;
     chat.attach(undefined);
     void (async () => {
       const element = carried ? await contextOf(carried) : undefined;
-      await exchange({ type: 'text', text, page: pageContext(config.keepQuery, element) });
+      await exchange(text, pageContext(config.keepQuery, element));
     })();
     return true;
+  }
+
+  const AGENT_KEY = 'klipp:agent';
+
+  function loadAgents(): Promise<void> {
+    agentsLoaded ??= listAgents(config.endpoint)
+      .then((answer) => {
+        agents = answer.agents;
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem(AGENT_KEY);
+        } catch {
+          // Storage can be blocked; the server's preference stands.
+        }
+        const usable = agents.filter((a) => a.available);
+        agent = usable.find((a) => a.id === saved)?.id ?? answer.preferred;
+        chat.showAgents(agents, agent);
+        if (!usable.length) {
+          chat.reply(
+            'I need **Claude Code** (`claude`) or **Codex** (`codex`) on this machine, logged in. Install one and restart the dev server.',
+          );
+          figure.mood = 'sad';
+        }
+      })
+      .catch(() => undefined);
+    return agentsLoaded;
+  }
+
+  function switchAgent(id: AgentId) {
+    if (busy || id === agent) return;
+    agent = id;
+    conversation = undefined;
+    try {
+      localStorage.setItem(AGENT_KEY, id);
+    } catch {
+      // Remembering the choice is a nicety.
+    }
+    chat.showAgents(agents, agent);
+    const label = agents.find((a) => a.id === id)?.label ?? id;
+    chat.reply(`${label} is answering now, starting a fresh conversation.`);
   }
 
   function open(greet = true) {
     if (mode !== 'closed') return;
     mode = 'open';
     chat.show();
+    void loadAgents();
     if (greet && !greeted) {
       greeted = true;
       chat.reply(GREETING);

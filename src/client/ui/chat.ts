@@ -1,4 +1,4 @@
-import type { IssueDraft } from '../../shared/protocol.js';
+import type { AgentId, AgentInfo, IssueDraft } from '../../shared/protocol.js';
 import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 
@@ -8,6 +8,7 @@ export interface ChatHandlers {
   point(): void;
   detach(): void;
   close(): void;
+  switchAgent(agent: AgentId): void;
 }
 
 /** One of Klipp's replies, filled in as it streams. */
@@ -15,14 +16,17 @@ export class Reply {
   private text = '';
   private frame = 0;
 
-  constructor(readonly element: HTMLElement) {}
+  constructor(
+    readonly element: HTMLElement,
+    private readonly update: (change: () => void) => void,
+  ) {}
 
   append(delta: string) {
     this.text += delta;
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
-      this.element.replaceChildren(renderMarkdown(this.text));
+      this.update(() => this.element.replaceChildren(renderMarkdown(this.text)));
     });
   }
 }
@@ -105,8 +109,14 @@ export class ChatView {
     'aria-label': 'Message Klipp',
   });
   private readonly chip = h('div', { class: 'chip', hidden: true });
+  private readonly agents = h('div', {
+    class: 'agents',
+    role: 'group',
+    'aria-label': 'Who answers',
+    hidden: true,
+  });
 
-  constructor(handlers: ChatHandlers) {
+  constructor(private readonly handlers: ChatHandlers) {
     const send = () => {
       const text = this.input.value.trim();
       if (!text || !handlers.send(text)) return;
@@ -128,6 +138,7 @@ export class ChatView {
         { class: 'close', type: 'button', 'aria-label': 'Close', onclick: () => handlers.close() },
         '×',
       ),
+      this.agents,
       this.log,
       this.chip,
       h(
@@ -157,6 +168,26 @@ export class ChatView {
     });
   }
 
+  /** The agents the user can switch between, with the current one pressed. */
+  showAgents(list: AgentInfo[], current: AgentId) {
+    const usable = list.filter((agent) => agent.available);
+    this.agents.hidden = usable.length === 0;
+    this.agents.replaceChildren(
+      ...usable.map((agent) =>
+        h(
+          'button',
+          {
+            class: 'agent',
+            type: 'button',
+            'aria-pressed': String(agent.id === current),
+            onclick: () => this.handlers.switchAgent(agent.id),
+          },
+          agent.label,
+        ),
+      ),
+    );
+  }
+
   get open(): boolean {
     return !this.element.hidden;
   }
@@ -181,13 +212,22 @@ export class ChatView {
     return element;
   }
 
+  /** Applies a change and keeps the newest text in view, unless the user had scrolled up to read. */
+  private keepInView(change: () => void) {
+    const nearEnd = this.log.scrollHeight - this.log.scrollTop - this.log.clientHeight < 120;
+    change();
+    if (nearEnd) this.log.scrollTop = this.log.scrollHeight;
+  }
+
   user(text: string) {
     this.add(h('div', { class: 'msg user' }, text));
   }
 
   /** A reply from Klipp; pass text for a whole one, or append to it as it streams. */
   reply(text?: string): Reply {
-    const reply = new Reply(this.add(h('div', { class: 'msg klipp' })));
+    const reply = new Reply(this.add(h('div', { class: 'msg klipp' })), (change) =>
+      this.keepInView(change),
+    );
     if (text) reply.append(text);
     return reply;
   }
@@ -216,9 +256,5 @@ export class ChatView {
         : []),
     );
     if (label) this.input.focus();
-  }
-
-  scrollToEnd() {
-    this.log.scrollTop = this.log.scrollHeight;
   }
 }

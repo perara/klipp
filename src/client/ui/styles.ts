@@ -175,6 +175,9 @@ a { color: var(--accent); }
   z-index: 1;
 }
 .chat .close:hover, .icon:hover { background: var(--soft); }
+.agents { display: flex; gap: 2px; margin: 10px 44px 0 12px; padding: 2px; align-self: flex-start; border-radius: 999px; background: var(--soft); }
+.agent { padding: 2px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.agent[aria-pressed='true'] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .log {
   flex: 1 1 auto;
   min-height: 64px;

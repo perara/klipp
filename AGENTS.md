@@ -18,9 +18,11 @@ server, as a production build under a base path, and on a touch phone.
 ## Rules
 
 - **Generic.** Nothing here knows about any one app. App-specific behaviour is an option.
-- **Nothing private leaves without a reason.** The model never sees on-screen text, form values
-  or query values; the API key and GitHub token stay in the server; an issue is filed only
-  after the user clicks to file it.
+- **Nothing private leaves without a reason.** The agent never sees on-screen text, form values
+  or query values; the GitHub token stays in the server; an issue is filed only after the user
+  clicks to file it.
+- **The agent can't change anything.** Claude runs `--restricted` with Read/Grep/Glob only,
+  Codex in its read-only sandbox; neither loads the user's own settings or MCP servers.
 - **No stuck modes.** Every mode leaves with Esc and with a visible control, and works by
   touch. Only one mode is active at a time.
 - **Strict-CSP safe.** No `innerHTML`, no inline `style` attributes, no inline scripts. Build

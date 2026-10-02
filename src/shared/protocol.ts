@@ -1,3 +1,17 @@
+/** The coding agents Klipp can run in the background, with your own login. */
+export type AgentId = 'claude' | 'codex';
+
+export interface AgentInfo {
+  id: AgentId;
+  label: string;
+  available: boolean;
+}
+
+export interface AgentsResponse {
+  agents: AgentInfo[];
+  preferred: AgentId;
+}
+
 /** A short reference to another element on the page. */
 export interface ElementRef {
   id: string;
@@ -43,7 +57,7 @@ export interface PageContext {
   element?: ElementContext;
 }
 
-/** Tools the browser runs: they need the page or the user. */
+/** Tools the agent calls that need the page or the user; the browser answers them. */
 export const CLIENT_TOOLS = ['point_at_element', 'inspect_element', 'propose_issue'] as const;
 export type ClientToolName = (typeof CLIENT_TOOLS)[number];
 
@@ -59,21 +73,25 @@ export interface ClientToolResult {
   isError?: boolean;
 }
 
-export type ChatInput =
-  | { type: 'text'; text: string; page: PageContext }
-  | { type: 'tool_results'; results: ClientToolResult[] };
-
 export interface ChatRequest {
   conversation?: string;
-  input: ChatInput;
+  agent: AgentId;
+  text: string;
+  page: PageContext;
+}
+
+export interface ToolResultRequest extends ClientToolResult {
+  conversation: string;
 }
 
 /** Streamed back as server-sent events, one JSON object per `data:` line. */
 export type ChatEvent =
   | { type: 'conversation'; id: string }
   | { type: 'text'; delta: string }
+  /** The next text starts a new reply. */
+  | { type: 'break' }
   | { type: 'activity'; label: string }
-  | { type: 'client_tools'; calls: ClientToolCall[] }
+  | { type: 'client_tool'; call: ClientToolCall }
   | { type: 'error'; message: string }
   | { type: 'done' };
 

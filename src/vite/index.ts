@@ -3,24 +3,23 @@ import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv, normalizePath, type Plugin, type ResolvedConfig } from 'vite';
 import { createKlippMiddleware } from '../server/handler.js';
-import type { Effort, Turn } from '../server/llm.js';
 import type { KlippManifest, ManifestEntry } from '../shared/manifest.js';
-import type { IssueDraft } from '../shared/protocol.js';
+import type { AgentId, IssueDraft } from '../shared/protocol.js';
 import type { Corner, RuntimeConfig } from '../shared/runtime-config.js';
 import { dirtyFiles, readGit, type GitInfo } from './git.js';
 import { stamp } from './stamp.js';
 
-export type { KlippManifest, ManifestEntry, RuntimeConfig, Corner, Effort, Turn, IssueDraft };
+export type { KlippManifest, ManifestEntry, RuntimeConfig, Corner, AgentId, IssueDraft };
 
 export interface ChatOptions {
-  /** Default: `claude-opus-5-5`. */
+  /** Which agent to start with when both are installed. Default: `claude`. */
+  agent?: AgentId;
+  /** Passed to the agent as its model. Default: the agent's own default. */
   model?: string;
-  /** Default: `medium`. */
-  effort?: Effort;
   /** Answer chat requests from other machines too, such as a phone on the LAN. Default: false. */
   allowRemote?: boolean;
-  /** Replaces the model, as the tests do. */
-  turn?: Turn;
+  /** Replace an agent's command and leading arguments, as the tests do. */
+  commands?: Partial<Record<AgentId, string[]>>;
   /** Replaces filing on GitHub, as the tests do. Returns the issue's address. */
   fileIssue?: (draft: IssueDraft) => Promise<string>;
 }
@@ -55,9 +54,9 @@ export interface KlippOptions {
    */
   keepQuery?: string[];
   /**
-   * The chat, served by the dev server (and `vite preview`) so the API key stays on your
-   * machine. It reads `ANTHROPIC_API_KEY` from the environment or `.env` files, and files
-   * issues with `gh`'s login or `GITHUB_TOKEN`. `false` turns it off.
+   * The chat. The dev server (and `vite preview`) runs Claude Code or Codex in the background,
+   * read-only in the repository, with your own login; nothing needs an API key. Issues are
+   * filed with `gh`'s login or `GITHUB_TOKEN`. `false` turns the chat off.
    */
   chat?: ChatOptions | false;
 }
@@ -158,18 +157,16 @@ export default function klipp(options: KlippOptions = {}): Plugin {
   /** One middleware for both servers; it serves the manifest only under development. */
   function klippMiddleware() {
     if (middleware) return middleware;
-    const chat = options.chat === false ? undefined : (options.chat ?? {});
+    const chat = options.chat === false ? {} : (options.chat ?? {});
     const envDir = typeof config.envDir === 'string' ? config.envDir : config.root;
-    const env = loadEnv(config.mode, envDir, ['ANTHROPIC_', 'KLIPP_', 'GITHUB_TOKEN', 'GH_TOKEN']);
+    const env = loadEnv(config.mode, envDir, ['KLIPP_', 'GITHUB_TOKEN', 'GH_TOKEN']);
     const repo = options.repo ?? git.repo;
     middleware = createKlippMiddleware({
       root: git.toplevel ?? config.root,
       env,
       ...(repo ? { repo } : {}),
       ...(config.command === 'serve' ? { manifest: () => manifest(true) } : {}),
-      ...(env.ANTHROPIC_API_KEY ? { apiKey: env.ANTHROPIC_API_KEY } : {}),
       ...chat,
-      ...(chat ? {} : { turn: async () => ({ content: [], stop_reason: 'end_turn' as const }) }),
     });
     return middleware;
   }

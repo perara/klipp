@@ -104,12 +104,76 @@ test('issues are filed only when you say so', async ({ page }) => {
   await expect(replies(page).last()).toHaveText('Filed! 📎');
 });
 
-test('a model failure shows up in the chat', async ({ page }) => {
+test('an agent that fails says how to fix it, and the next message works', async ({ page }) => {
   await openChat(page);
   await ask(page, 'break please');
-  await expect(replies(page).last()).toContainText('the test model broke on purpose');
+  await expect(replies(page).last()).toContainText('OAuth session expired');
+  await expect(replies(page).last()).toContainText('log in');
   await ask(page, 'hello again');
   await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+});
+
+test('the newest reply stays in view as the conversation grows', async ({ page }) => {
+  await openChat(page);
+  for (let i = 0; i < 8; i++) {
+    await ask(page, `hello ${i}`);
+    await expect(replies(page)).toHaveCount(i + 2);
+  }
+  await expect(replies(page).last()).toBeInViewport({ ratio: 1 });
+});
+
+test('the conversation carries on from one message to the next', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'remember pineapple');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+  await ask(page, 'what did I say?');
+  await expect(replies(page).last()).toHaveText('You said: remember pineapple');
+});
+
+test('you can switch between Claude and Codex', async ({ page }) => {
+  await openChat(page);
+  const agents = chat(page).getByRole('group', { name: 'Who answers' });
+  await expect(agents.getByRole('button', { name: 'Claude' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await ask(page, 'who are you?');
+  await expect(replies(page).last()).toHaveText('I am Claude, in a paperclip.');
+
+  await agents.getByRole('button', { name: 'Codex' }).click();
+  await expect(replies(page).last()).toHaveText(
+    'Codex is answering now, starting a fresh conversation.',
+  );
+  await ask(page, 'who are you?');
+  await expect(replies(page).last()).toHaveText('I am Codex, in a paperclip.');
+
+  await ask(page, 'the button is broken');
+  await expect(hint(page)).toContainText('Click the button you mean.');
+  await page.getByRole('button', { name: 'Count' }).click({ force: true });
+  await expect(chat(page).locator('.activity').last()).toHaveText(
+    'Running sed -n 5p examples/react-app/src/Button.tsx',
+  );
+  await expect(replies(page).last()).toContainText('I read it:');
+
+  await page.reload();
+  await openChat(page);
+  await expect(agents.getByRole('button', { name: 'Codex' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('typing instead of answering an issue draft answers it', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'report this');
+  await expect(chat(page).locator('.card')).toContainText('Count does nothing');
+  await ask(page, 'not yet, look closer');
+  await expect(replies(page).last()).toHaveText(
+    "Noted: The user didn't file it, and wrote instead: not yet, look closer",
+  );
+  await expect(chat(page).locator('.card').getByRole('button', { name: 'File issue' })).toHaveCount(
+    0,
+  );
 });
 
 test('a Klipp link opens the chat on that element', async ({ page }) => {
