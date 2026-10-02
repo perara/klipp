@@ -1,8 +1,7 @@
 import { h } from './dom.js';
 
-/** `code`, **bold**, *emphasis* and [links](https://…); anything else stays text. */
-const INLINE =
-  /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|\*([^*\s][^*\n]*)\*/g;
+/** `code`, **bold**, *emphasis* and [links](…); anything else stays text. */
+const INLINE = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\(([^)\s]+)\)|\*([^*\s][^*\n]*)\*/g;
 
 function inline(text: string): Array<Node | string> {
   const out: Array<Node | string> = [];
@@ -12,9 +11,12 @@ function inline(text: string): Array<Node | string> {
     const [, code, bold, label, href, em] = match;
     if (code !== undefined) out.push(h('code', {}, code));
     else if (bold !== undefined) out.push(h('strong', {}, ...inline(bold)));
-    else if (label !== undefined)
+    else if (label !== undefined && /^https?:\/\//.test(href!)) {
       out.push(h('a', { href: href!, target: '_blank', rel: 'noreferrer' }, label));
-    else out.push(h('em', {}, em!));
+    } else if (label !== undefined) {
+      // Agents link files by their local path; the page can't open those, so show the place.
+      out.push(h('code', {}, label));
+    } else out.push(h('em', {}, em!));
     last = match.index + match[0].length;
   }
   out.push(text.slice(last));

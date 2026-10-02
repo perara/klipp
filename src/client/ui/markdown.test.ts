@@ -21,9 +21,15 @@ describe('renderMarkdown', () => {
     );
   });
 
+  it('shows a link to a local file as its place in the code', () => {
+    expect(html('Handled at [src/App.tsx:52](/home/me/app/src/App.tsx:52).')).toBe(
+      '<p>Handled at <code>src/App.tsx:52</code>.</p>',
+    );
+  });
+
   it('never turns model output into markup or script links', () => {
     expect(html('<img src=x onerror=alert(1)> [x](javascript:alert(1))')).toBe(
-      '<p>&lt;img src=x onerror=alert(1)&gt; [x](javascript:alert(1))</p>',
+      '<p>&lt;img src=x onerror=alert(1)&gt; <code>x</code>)</p>',
     );
   });
 });
