@@ -91,26 +91,12 @@ It's always off under Vitest.
 
 ## How it works
 
-```mermaid
-sequenceDiagram
-    actor T as Tester
-    participant K as Klipp (in the page)
-    participant D as Your dev server
-    participant A as Claude Code / Codex
-    participant G as GitHub
-    T->>K: "The Save button doesn't work"
-    K->>D: message + page context (no page text)
-    D->>A: claude -p / codex exec, read-only, same session
-    A-->>K: point_at_element (MCP)
-    T->>K: clicks Save
-    K-->>A: App.tsx:50 · disabled · covered by .veil
-    Note over A: reads the code
-    A-->>T: "What should happen when you press it?"
-    T->>K: "Save my changes. It's major."
-    A-->>K: propose_ticket (checked: a bug needs steps and severity)
-    T->>K: File ticket
-    K->>G: issue, labels bug + klipp, element and build details
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/klipp-flow-dark.svg">
+    <img alt="How it works: a tester tells and points, Klipp asks what's missing, the ticket is checked for its type, and it is filed on GitHub" src=".github/assets/klipp-flow.svg" width="860">
+  </picture>
+</p>
 
 The dev server runs the agent once per message and resumes its session, so the conversation
 carries on. The agent reaches the page only through Klipp's three tools, served to it over MCP on

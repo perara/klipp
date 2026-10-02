@@ -133,6 +133,93 @@ function moods() {
 `;
 }
 
+/** Four steps from "this looks wrong" to a filed ticket, as cards with icons. */
+function flow(dark) {
+  const c = dark
+    ? {
+        card: '#161b22',
+        line: '#30363d',
+        title: '#e6edf3',
+        body: '#9198a1',
+        arrow: '#9e6a03',
+        icon: '#9198a1',
+      }
+    : {
+        card: '#ffffff',
+        line: '#d0d7de',
+        title: '#1f2328',
+        body: '#59636e',
+        arrow: '#d4a72c',
+        icon: '#57606a',
+      };
+  const steps = [
+    {
+      title: 'Tell & point',
+      body: [
+        "A tester says what's wrong",
+        "or what they'd like, and",
+        'clicks the thing they mean.',
+      ],
+    },
+    {
+      title: 'Klipp asks',
+      body: ['Your own Claude Code or', 'Codex reads the code and', "asks only what's missing."],
+    },
+    {
+      title: 'Ticket checked',
+      body: ['Bug, feature request,', 'suggestion or question:', 'complete for its type.'],
+    },
+    {
+      title: 'Filed on GitHub',
+      body: [
+        'One click files it, labelled,',
+        'with the element, code,',
+        'page and build attached.',
+      ],
+    },
+  ];
+  const icons = [
+    // A pointer over a target.
+    `<circle cx="22" cy="22" r="14" fill="none" stroke="${c.icon}" stroke-width="2.4"/><circle cx="22" cy="22" r="5" fill="#bf3989"/><path d="M30 30 L40 44 L42 36 L50 34 Z" fill="${c.icon}"/>`,
+    // A speech bubble, thinking.
+    `<path d="M6 10 h40 a6 6 0 0 1 6 6 v18 a6 6 0 0 1 -6 6 h-24 l-10 8 v-8 h-6 a6 6 0 0 1 -6 -6 v-18 a6 6 0 0 1 6 -6 z" fill="#fff8c5" stroke="#d4a72c" stroke-width="2"/><circle cx="17" cy="25" r="3" fill="${'#57606a'}"/><circle cx="26" cy="25" r="3" fill="${'#57606a'}"/><circle cx="35" cy="25" r="3" fill="${'#57606a'}"/>`,
+    // A checklist.
+    `<rect x="8" y="4" width="36" height="46" rx="6" fill="none" stroke="${c.icon}" stroke-width="2.4"/>${[16, 27, 38].map((y) => `<path d="M14 ${y} l4 4 l7 -8" fill="none" stroke="#1a7f37" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M30 ${y} h8" stroke="${c.icon}" stroke-width="2.4" stroke-linecap="round"/>`).join('')}`,
+    // An issue, labelled.
+    `<circle cx="22" cy="24" r="16" fill="none" stroke="#1a7f37" stroke-width="2.6"/><circle cx="22" cy="24" r="4" fill="#1a7f37"/><rect x="34" y="36" width="20" height="12" rx="6" fill="#cf222e"/>`,
+  ];
+  const card = 216;
+  const gap = 34;
+  const cards = steps
+    .map((step, i) => {
+      const x = i * (card + gap);
+      const title = text(heavy, step.title, x + 20, 108, 20, c.title).svg;
+      const number = text(heavy, String(i + 1), x + card - 26, 35, 15, '#9a6700', true).svg;
+      const body = step.body
+        .map(
+          (line, j) =>
+            `<text x="${x + 20}" y="${134 + j * 19}" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="${c.body}">${line.replace(/&/g, '&amp;')}</text>`,
+        )
+        .join('');
+      const arrow =
+        i < steps.length - 1
+          ? `<path d="M${x + card + 9} 100 h${gap - 18} m-7 -7 l7 7 l-7 7" fill="none" stroke="${c.arrow}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`
+          : '';
+      return `<g><rect x="${x + 1}" y="1" width="${card - 2}" height="208" rx="16" fill="${c.card}" stroke="${c.line}" stroke-width="1.5"/>
+    <circle cx="${x + card - 26}" cy="30" r="13" fill="#fff8c5" stroke="#d4a72c" stroke-width="1.5"/>${number}
+    <g transform="translate(${x + 18} 22)">${icons[i]}</g>${title}${body}</g>${arrow}`;
+    })
+    .join('\n  ');
+  const width = steps.length * card + (steps.length - 1) * gap;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 210" width="${width}" height="210" role="img" aria-label="How it works: a tester tells and points, Klipp asks what's missing, the ticket is checked for its type, and it is filed on GitHub">
+  <title>How Klipp works</title>
+  ${cards}
+</svg>
+`;
+}
+
+writeFileSync(join(out, 'klipp-flow.svg'), flow(false));
+writeFileSync(join(out, 'klipp-flow-dark.svg'), flow(true));
 writeFileSync(join(out, 'klipp-logo.svg'), logo('#1f2328'));
 writeFileSync(join(out, 'klipp-logo-dark.svg'), logo('#e6edf3'));
 writeFileSync(join(out, 'klipp-moods.svg'), moods());
