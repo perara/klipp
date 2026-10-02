@@ -4,15 +4,17 @@ import { defineConfig } from 'vite';
 // The built package, exactly as an app that installs Klipp would load it.
 import klipp, { type IssueDraft } from '../../dist/vite/index.js';
 
-// A stand-in for `claude` and `codex`, so the tests need no login.
-const fakeAgent = [
-  process.execPath,
-  fileURLToPath(new URL('../../test/fake-agent.mjs', import.meta.url)),
-];
+// A stand-in for `claude` and `codex`, so the tests need no login. The README demo uses its own.
+const standIn = process.env.KLIPP_DEMO
+  ? '../../scripts/demo/demo-agent.mjs'
+  : '../../test/fake-agent.mjs';
+const fakeAgent = [process.execPath, fileURLToPath(new URL(standIn, import.meta.url))];
 let filed = 0;
-// The address carries the labels it would have set, for the tests to see.
+// The address carries the labels it would have set, for the tests to see (not in the demo).
 const fakeFileIssue = async (_draft: IssueDraft, labels: string[]) =>
-  `https://github.com/example/app/issues/${++filed}#labels=${labels.join(',')}`;
+  process.env.KLIPP_DEMO
+    ? 'https://github.com/example/app/issues/42'
+    : `https://github.com/example/app/issues/${++filed}#labels=${labels.join(',')}`;
 
 export default defineConfig({
   base: process.env.EXAMPLE_BASE ?? '/',

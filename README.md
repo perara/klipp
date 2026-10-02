@@ -1,43 +1,67 @@
-# Klipp
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/klipp-logo-dark.svg">
+    <img alt="Klipp" src=".github/assets/klipp-logo.svg" height="120">
+  </picture>
+</p>
 
-A paperclip that lives in the corner of your web app while you build and test it, and turns
-what testers notice into **tickets the team can act on**. Tell it what's wrong or what you'd
-like, point at the thing you mean, and Klipp works out whether it's a bug, a feature request, a
-suggestion or a question. It asks for whatever that kind of ticket still needs, finds where it
-lives in the code, and files it on GitHub when you say so.
+<h3 align="center">The paperclip that turns “this looks wrong” into a ticket your team can act on.</h3>
 
-Its brain is a coding agent you already have: **Claude Code** or **Codex**, run in the
-background by the dev server with your own login. No API keys.
+<p align="center">
+  <a href="https://github.com/perara/klipp/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/perara/klipp/ci.yml?branch=main&style=flat-square&label=ci"></a>
+  <a href="https://github.com/perara/klipp/releases"><img alt="Release" src="https://img.shields.io/github/v/release/perara/klipp?style=flat-square&color=d4a72c"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/github/license/perara/klipp?style=flat-square&color=57606a"></a>
+  <img alt="Vite plugin" src="https://img.shields.io/badge/vite-plugin-646cff?style=flat-square&logo=vite&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/react-ready-149eca?style=flat-square&logo=react&logoColor=white">
+  <img alt="Works with Claude Code" src="https://img.shields.io/badge/Claude_Code-works_with-d97757?style=flat-square&logo=anthropic&logoColor=white">
+  <img alt="Works with Codex" src="https://img.shields.io/badge/Codex-works_with-10a37f?style=flat-square&logo=openai&logoColor=white">
+</p>
 
-```
-you    The Save button doesn't work.
-klipp  Point at the Save button that doesn't work.      (you click it)
-       📎 Running nl -ba src/App.tsx
-klipp  Save is disabled at src/App.tsx:50, and something covers it at line 53.
-       What should happen when you press Save?
-you    My changes should be saved. It's major: I can't save my work.
-klipp  ┌ Bug · major ─────────────────────────────────────┐
-       │ Save button does nothing                          │
-       │ What happens · What should happen · Steps ·       │
-       │ How often · In the code (App.tsx:50, :53)         │
-       │ [File ticket]  [Not now]                          │
-       └───────────────────────────────────────────────────┘
-```
+<p align="center">
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#how-it-works"><b>How it works</b></a> ·
+  <a href="#tickets"><b>Tickets</b></a> ·
+  <a href="#privacy-and-safety"><b>Privacy</b></a> ·
+  <a href="#options"><b>Options</b></a>
+</p>
 
-## Tickets
+<p align="center">
+  <img alt="A tester tells Klipp the Save button doesn't work and points at it. Klipp reads the code, asks one question, and files a bug ticket with the right label." src=".github/assets/klipp-demo.gif" width="860">
+</p>
+<p align="center"><sub>Recorded from the example app with <code>npm run demo:record</code>. The agent is scripted for a steady pace; its lines come from a real Codex session.</sub></p>
 
-| Type            | When                                          | Klipp collects                                        | Labels                 |
-| --------------- | --------------------------------------------- | ----------------------------------------------------- | ---------------------- |
-| Bug             | Something doesn't work as intended            | what happens, what should, steps, how often, severity | `bug`, `klipp`         |
-| Feature request | Something the app can't do yet that is needed | the need, what would help, who it helps, today's way  | `enhancement`, `klipp` |
-| Suggestion      | Something works but could be better           | what's there now, the change, why it's better         | `suggestion`, `klipp`  |
-| Question        | How something is meant to work                | the question, and the answer from the code if found   | `question`, `klipp`    |
+---
 
-A ticket is checked against its type before you see it: if a bug has no steps or severity, or a
-feature request has no need behind it, the agent is told what's missing and asks you, one
-question at a time. Every ticket gets the element, code, page, build and browser details
-appended, so nobody has to ask "where?" or "which version?". Change the labels with
-`chat.labels`.
+Klipp lives in the corner of your web app while you build and test it. A tester clicks the
+paperclip, says what's wrong or what they'd like, and points at the thing they mean. Klipp works
+out whether it's a **bug**, a **feature request**, a **suggestion** or a **question**, asks only
+for what that kind of ticket still needs, finds where it lives in the code, and files it on
+GitHub when they say so.
+
+Its brain is a coding agent you already have, **Claude Code** or **Codex**, run in the background
+by your dev server with your own login. There are no API keys and nothing to host.
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h4>🎯 Point, don't describe</h4>
+      Testers click the element instead of describing it. Every element carries a stable ID
+      derived from the source, so the ticket names the exact file, line and component, even in
+      a list or a shared component.
+    </td>
+    <td width="33%" valign="top">
+      <h4>🧭 Triage built in</h4>
+      Each ticket type has what it needs: steps and severity for a bug, the need behind a feature
+      request. An incomplete ticket goes back to the agent, which asks for what's missing, one
+      question at a time.
+    </td>
+    <td width="33%" valign="top">
+      <h4>🔒 Yours, and read-only</h4>
+      The agent runs on your machine with your login and can't change a file. It never sees the
+      text on the page, and nothing is filed until someone clicks <b>File ticket</b>.
+    </td>
+  </tr>
+</table>
 
 ## Quick start
 
@@ -55,35 +79,68 @@ export default defineConfig({
 });
 ```
 
-Then have `claude` (Claude Code) or `codex` (Codex CLI) installed and logged in on the same
-machine. Klipp files issues with your GitHub CLI login (`gh auth login`), or `GITHUB_TOKEN`.
+Then:
+
+1. Have [Claude Code](https://code.claude.com) (`claude`) or [Codex](https://github.com/openai/codex) (`codex`) installed and logged in on the same machine.
+2. Log in to the GitHub CLI (`gh auth login`), or set `GITHUB_TOKEN`, so Klipp can file tickets.
+3. Run your dev server and click the paperclip, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>.
 
 Klipp runs **under the dev server and is off in builds**. Turn it on for a test build with
-`KLIPP=1 vite build` (the chat then works under `vite preview`), and off anywhere with
-`KLIPP=0`. It's always off under Vitest.
+`KLIPP=1 vite build` (the chat then works under `vite preview`), and off anywhere with `KLIPP=0`.
+It's always off under Vitest.
 
-## What Klipp sees
+## How it works
 
-- **The element you point at:** its tag, state (disabled, hidden, covered by something else),
-  the file and line that rendered it, the components it sits inside, its parent, and what lies
-  beneath it.
-- **The page:** its address (query values blanked), the viewport, and recent console errors
-  and failed requests.
-- **The code:** the agent works in your repository, read-only. Claude runs restricted to Read,
-  Grep and Glob (no shell, no web, `.env` and key files denied), Codex in its read-only sandbox.
-  Neither loads your own settings or other MCP servers.
+```mermaid
+sequenceDiagram
+    actor T as Tester
+    participant K as Klipp (in the page)
+    participant D as Your dev server
+    participant A as Claude Code / Codex
+    participant G as GitHub
+    T->>K: "The Save button doesn't work"
+    K->>D: message + page context (no page text)
+    D->>A: claude -p / codex exec, read-only, same session
+    A-->>K: point_at_element (MCP)
+    T->>K: clicks Save
+    K-->>A: App.tsx:50 · disabled · covered by .veil
+    Note over A: reads the code
+    A-->>T: "What should happen when you press it?"
+    T->>K: "Save my changes. It's major."
+    A-->>K: propose_ticket (checked: a bug needs steps and severity)
+    T->>K: File ticket
+    K->>G: issue, labels bug + klipp, element and build details
+```
 
-It never sees the text on the page or what anyone typed into it. If the wording matters, it
-asks. The agent reaches the page only through Klipp's own tools (point, inspect, propose an
-issue), served to it over MCP on a loopback port with a per-run token. The page talks only to
-its own origin, and the chat answers only requests from the same machine (`chat.allowRemote`
-lets a phone on your LAN in).
+The dev server runs the agent once per message and resumes its session, so the conversation
+carries on. The agent reaches the page only through Klipp's three tools, served to it over MCP on
+a loopback port with a per-run token:
 
-## Stable element IDs
+| Tool               | What it does                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `point_at_element` | Asks the tester to click something; returns its ID, code location, components and state. |
+| `inspect_element`  | Looks up an element by its ID, such as something underneath the one the tester clicked.  |
+| `propose_ticket`   | Shows the ticket for the tester to file, once it has everything its type needs.          |
 
-Every element in your JSX gets a `data-klipp` attribute at build time, holding a hash of where
-it's written. Nobody writes IDs by hand. Each element's full ID is the same for every user and
-every reload, and it leads back to a file and line:
+## Tickets
+
+| Type               | When                                          | Klipp collects                                        | Labels                 |
+| ------------------ | --------------------------------------------- | ----------------------------------------------------- | ---------------------- |
+| 🐞 Bug             | Something doesn't work as intended            | what happens, what should, steps, how often, severity | `bug`, `klipp`         |
+| ✨ Feature request | Something the app can't do yet that is needed | the need, what would help, who it helps, today's way  | `enhancement`, `klipp` |
+| 💡 Suggestion      | Something works but could be better           | what's there now, the change, why it's better         | `suggestion`, `klipp`  |
+| ❓ Question        | How something is meant to work                | the question, and the answer from the code            | `question`, `klipp`    |
+
+Every ticket also gets the element's Klipp ID, a permalink to its code at the build's commit, the
+components it sits in, its state (disabled, hidden, covered), the page, the build and the
+browser, so nobody has to ask "where?" or "which version?". Change the labels with
+`chat.labels`.
+
+### Stable element IDs
+
+At build time every element in your JSX gets a `data-klipp` attribute, holding a hash of where it
+is written. Nobody writes IDs by hand. The full ID is the same for every user and every reload,
+and it leads back to a file and line:
 
 ```
 3f9a2c1d.x7k2:2/1/0
@@ -91,38 +148,66 @@ every reload, and it leads back to a file and line:
                  └ which one, when identical instances repeat
 ```
 
-The instance part comes from the component call sites and React keys above the element. A
+The instance part comes from the component call sites and React keys above the element. So a
 shared `<Button>` used in two places gets two IDs, and a list row keeps its ID when the list
-reorders. Open `https://your.app/page?klipp=3f9a2c1d.x7k2` and Klipp opens on that element.
-Filed issues carry the ID and `klipp:3f9a2c1d`, so you can search for every report about the
-same code. In the DevTools console, `klipp.id($0)` gives an element's ID and `klipp.find(id)`
-finds it.
+reorders. Open `https://your.app/page?klipp=3f9a2c1d.x7k2` and Klipp opens on that element. In
+the DevTools console, `klipp.id($0)` gives an element's ID and `klipp.find(id)` finds it.
+
+## Privacy and safety
+
+- **No page text.** The agent sees structure and state, never the text on the page or form values. Query values in addresses are blanked, except the ones you list in `keepQuery`.
+- **Read-only agents.** Claude runs `--restricted` with only Read, Grep and Glob: no shell, no web, and `.env` and key files are denied. Codex runs in its read-only sandbox. Neither loads your own settings or other MCP servers.
+- **Local only.** The page talks only to its own origin. The chat answers only same-machine, same-origin requests that carry Klipp's header (`chat.allowRemote` lets a phone on your LAN in).
+- **Nothing filed without a click,** and Klipp's own key and pointer events never reach your page's handlers.
+- **Strict-CSP friendly.** Klipp uses no `innerHTML`, no inline styles and no inline scripts.
 
 ## Options
 
-| Option                    | Default                           | What it does                                                    |
-| ------------------------- | --------------------------------- | --------------------------------------------------------------- |
-| `enabled`                 | dev only                          | Force Klipp on or off.                                          |
-| `chat`                    | `{}`                              | `{ agent, model, labels, allowRemote }`, or `false` for none.   |
-| `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for hotkey only.           |
-| `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there. |
-| `hotkey`                  | `alt+shift+k`                     | Opens and closes the chat.                                      |
-| `keepQuery`               | `[]`                              | Query parameters (such as `demo`) kept in addresses and links.  |
-| `repo` / `commit`         | from `git`                        | Where permalinks and issues go.                                 |
-| `include` / `exclude`     | `.jsx`/`.tsx`, not `node_modules` | Which files to stamp.                                           |
-| `stampComponents`         | `true`                            | Mark component call sites so shared components tell uses apart. |
-| `launcherUnderAutomation` | `false`                           | Show the paperclip under Playwright/WebDriver too.              |
+| Option                    | Default                           | What it does                                                           |
+| ------------------------- | --------------------------------- | ---------------------------------------------------------------------- |
+| `enabled`                 | dev only                          | Force Klipp on or off.                                                 |
+| `chat.agent`              | `claude`                          | Who answers first; the chat can switch to the other.                   |
+| `chat.model`              | the agent's default               | Passed to the agent.                                                   |
+| `chat.labels`             | see [Tickets](#tickets)           | GitHub labels per ticket type.                                         |
+| `chat.allowRemote`        | `false`                           | Answer chat requests from other machines too.                          |
+| `chat`                    | `{}`                              | `false` turns the chat off and keeps pointing and links.               |
+| `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for the hotkey only.              |
+| `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there.        |
+| `hotkey`                  | `alt+shift+k`                     | Opens and closes the chat.                                             |
+| `keepQuery`               | `[]`                              | Query parameters (such as `demo`) kept in addresses and links.         |
+| `repo` / `commit`         | from `git`                        | Where permalinks and tickets go.                                       |
+| `include` / `exclude`     | `.jsx`/`.tsx`, not `node_modules` | Which files to stamp.                                                  |
+| `stampComponents`         | `true`                            | Mark component call sites, so shared components tell their uses apart. |
+| `launcherUnderAutomation` | `false`                           | Show the paperclip under Playwright and WebDriver too.                 |
 
-`chat.agent` picks who answers first (`claude` by default, or `codex`); the chat has a switch
-for the other one when both are installed, and remembers your choice. `chat.model` is passed to
-the agent.
+## Meet Klipp
+
+<p align="center">
+  <img alt="Klipp's moods: idle, hello, thinking, talking, pointing and sad" src=".github/assets/klipp-moods.svg" width="760">
+</p>
+
+His eyes follow your pointer. He hops when he says hello, sways while he thinks, bounces as he
+talks, leans in while you point, and droops when something goes wrong.
 
 ## Limits
 
 - Content drawn on a canvas (maps, WebGL scenes) has no DOM, so pointing stops at the canvas.
 - Markup inside other components' shadow roots isn't reached.
-- Permalinks and issues use GitHub.
+- Permalinks and tickets use GitHub.
+
+## Development
+
+```bash
+npm run check        # format, typecheck, unit tests, build: the CI `check` job
+npm run test:e2e     # the example app under the dev server, a production build, and touch
+npm run demo:record  # re-record the demo GIF above (needs ffmpeg)
+```
+
+The tests use a stand-in agent that speaks both CLIs' formats and MCP, so they need no login. See
+[AGENTS.md](AGENTS.md) for how changes are verified.
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Per-Arne Andersen
+
+<p align="center"><sub>Made with 📎 for the people who find the bugs.</sub></p>

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395 160" width="395" height="160" role="img" aria-label="Klipp">
+  <title>Klipp</title>
+  <style>
+  .figure path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .wire-shade { stroke: #57606a; stroke-width: 5.6; }
+  .wire { stroke: #9aa4ae; stroke-width: 4; }
+  .wire-shine { stroke: #f2f5f7; stroke-width: 1.3; opacity: 0.85; }
+  .brow { stroke: #57606a; stroke-width: 2.3; transform-box: fill-box; transform-origin: center; }
+  .white { fill: #fff; stroke: #57606a; stroke-width: 1; }
+  .iris { fill: #1f2328; } .glint { fill: #fff; }
+  .eye { transform-box: fill-box; transform-origin: center; animation: blink 6s infinite; }
+  .body { transform-box: view-box; transform-origin: 32px 88px; }
+  .shadow { fill: #000; fill-opacity: 0.16; transform-box: fill-box; transform-origin: center; }
+  .dots { opacity: 0; } .dots circle { fill: #f2f5f7; stroke: #57606a; stroke-width: 0.8; }
+  .mood-idle .body { animation: bob 3.4s ease-in-out infinite; }
+  .mood-idle .shadow { animation: shadow 3.4s ease-in-out infinite; }
+  .mood-hello .body { animation: hop 2.6s ease-out infinite; }
+  .mood-hello .brow { transform: translateY(-2.5px); }
+  .mood-thinking .body { animation: sway 1.8s ease-in-out infinite; }
+  .mood-thinking .pupil { transform: translate(1.8px, -2.2px); }
+  .mood-thinking .brow-left { transform: translateY(-2.5px) rotate(-8deg); }
+  .mood-thinking .dots { opacity: 1; }
+  .mood-thinking .dots circle { animation: dot 1.2s ease-in-out infinite; }
+  .mood-thinking .dots circle:nth-child(2) { animation-delay: 0.2s; }
+  .mood-thinking .dots circle:nth-child(3) { animation-delay: 0.4s; }
+  .mood-talking .body { animation: chatter 0.5s ease-in-out infinite; }
+  .mood-talking .brow { animation: brows 0.5s ease-in-out infinite; }
+  .mood-pointing .body { transform: rotate(-9deg); }
+  .mood-pointing .brow { transform: translateY(-1.5px); }
+  .mood-pointing .pupil { animation: track 3s ease-in-out infinite; }
+  .mood-sad .body { transform: translateY(2px) rotate(4deg); }
+  .mood-sad .brow-left { transform: translateY(1px) rotate(-16deg); }
+  .mood-sad .brow-right { transform: translateY(1px) rotate(16deg); }
+  .mood-sad .pupil { transform: translate(0, 2px); }
+  .glance .pupil { animation: glance 7s ease-in-out infinite; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+  @keyframes shadow { 0%, 100% { transform: scaleX(1); opacity: 1; } 50% { transform: scaleX(0.85); opacity: 0.7; } }
+  @keyframes hop { 0% { transform: translateY(0) rotate(0); } 12% { transform: translateY(-12px) rotate(-8deg); }
+    22% { transform: translateY(0) rotate(6deg); } 30% { transform: translateY(-4px) rotate(-3deg); } 38%, 100% { transform: translateY(0) rotate(0); } }
+  @keyframes sway { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+  @keyframes chatter { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+  @keyframes brows { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
+  @keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
+  @keyframes dot { 0%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+  @keyframes track { 0%, 100% { transform: translate(-2px, 1px); } 50% { transform: translate(2px, 1.5px); } }
+  @keyframes glance { 0%, 30%, 100% { transform: translate(0, 0); } 36%, 48% { transform: translate(-2px, 0.5px); }
+    54%, 66% { transform: translate(2px, 0.5px); } 72% { transform: translate(0, 0); } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }</style>
+  <g transform="rotate(-7 58 82)">
+  <svg x="10" y="6" width="96" height="144" viewBox="0 0 64 96" overflow="visible" class="figure mood-idle glance">
+    <ellipse class="shadow" cx="32" cy="91" rx="15" ry="3"/>
+    <g class="body">
+      <path class="wire-shade" d="M27 34 V66 A6 6 0 0 0 39 66 V18 A10 10 0 0 0 19 18 V72 A13.5 13.5 0 0 0 46 72 V32"/><path class="wire" d="M27 34 V66 A6 6 0 0 0 39 66 V18 A10 10 0 0 0 19 18 V72 A13.5 13.5 0 0 0 46 72 V32"/><path class="wire-shine" d="M27 34 V66 A6 6 0 0 0 39 66 V18 A10 10 0 0 0 19 18 V72 A13.5 13.5 0 0 0 46 72 V32"/>
+      <path class="brow brow-left" d="M17.5 19.5 Q23 15.5 30 18"/><path class="brow brow-right" d="M34.5 18 Q41 15 47 19"/>
+      
+      <g class="eye"><circle class="white" cx="25" cy="28" r="6.2"/>
+        <g class="pupil"><circle class="iris" cx="25" cy="28.6" r="2.9"/><circle class="glint" cx="26" cy="27.5" r="0.9"/></g></g>
+      <g class="eye"><circle class="white" cx="40" cy="28" r="6.2"/>
+        <g class="pupil"><circle class="iris" cx="40" cy="28.6" r="2.9"/><circle class="glint" cx="41" cy="27.5" r="0.9"/></g></g>
+      <g class="dots"><circle cx="51" cy="12" r="1.8"/><circle cx="56" cy="7" r="2.2"/><circle cx="61.5" cy="1.5" r="2.6"/></g>
+    </g>
+  </svg></g>
+  <path d="M133.50 112.94L133.50 112.94Q129.54 112.94 127.46 110.75Q125.38 108.57 125.38 104.62L125.38 104.62L125.38 45.96Q125.38 42.01 127.46 39.88Q129.54 37.74 133.50 37.74L133.50 37.74Q137.34 37.74 139.42 39.88Q141.50 42.01 141.50 45.96L141.50 45.96L141.50 70.61L141.71 70.61L169.38 41.70Q171.14 39.82 173.07 38.84Q174.99 37.85 177.49 37.85L177.49 37.85Q181.13 37.85 182.74 39.72Q184.35 41.59 184.14 44.09Q183.94 46.58 181.86 48.77L181.86 48.77L154.09 77.16L154.19 70.19L183.31 101.29Q185.70 103.89 185.76 106.59Q185.81 109.30 183.99 111.12Q182.17 112.94 178.63 112.94L178.63 112.94Q175.62 112.94 173.80 111.69Q171.98 110.44 169.79 108.05L169.79 108.05L141.71 78.51L141.50 78.51L141.50 104.62Q141.50 108.57 139.48 110.75Q137.45 112.94 133.50 112.94ZM217.42 113.14L217.42 113.14Q208.17 113.14 203.59 108.00Q199.02 102.85 199.02 92.66L199.02 92.66L199.02 45.75Q199.02 41.80 201.04 39.77Q203.07 37.74 206.92 37.74L206.92 37.74Q210.66 37.74 212.69 39.77Q214.72 41.80 214.72 45.75L214.72 45.75L214.72 92.03Q214.72 96.30 216.54 98.32Q218.36 100.35 221.38 100.35L221.38 100.35Q222.21 100.35 222.94 100.25Q223.66 100.14 224.50 100.14L224.50 100.14Q226.16 99.94 226.84 101.13Q227.51 102.33 227.51 105.86L227.51 105.86Q227.51 108.98 226.26 110.60Q225.02 112.21 222.42 112.73L222.42 112.73Q221.38 112.83 220.02 112.99Q218.67 113.14 217.42 113.14ZM241.55 112.83L241.55 112.83Q237.70 112.83 235.68 110.60Q233.65 108.36 233.65 104.30L233.65 104.30L233.65 68.74Q233.65 64.58 235.68 62.34Q237.70 60.10 241.55 60.10L241.55 60.10Q245.30 60.10 247.32 62.34Q249.35 64.58 249.35 68.74L249.35 68.74L249.35 104.30Q249.35 108.36 247.38 110.60Q245.40 112.83 241.55 112.83ZM241.55 51.58L241.55 51.58Q237.18 51.58 234.84 49.55Q232.50 47.52 232.50 43.78L232.50 43.78Q232.50 39.93 234.84 37.90Q237.18 35.87 241.55 35.87L241.55 35.87Q245.92 35.87 248.21 37.90Q250.50 39.93 250.50 43.78L250.50 43.78Q250.50 47.52 248.21 49.55Q245.92 51.58 241.55 51.58ZM269.42 131.66L269.42 131.66Q265.58 131.66 263.55 129.63Q261.52 127.60 261.52 123.65L261.52 123.65L261.52 68.01Q261.52 64.16 263.55 62.13Q265.58 60.10 269.22 60.10L269.22 60.10Q273.06 60.10 275.04 62.13Q277.02 64.16 277.02 68.01L277.02 68.01L277.02 75.08L275.87 71.02Q277.43 66.03 282.16 62.96Q286.90 59.90 293.03 59.90L293.03 59.90Q299.69 59.90 304.73 63.12Q309.78 66.34 312.58 72.27Q315.39 78.20 315.39 86.42L315.39 86.42Q315.39 94.63 312.58 100.66Q309.78 106.70 304.78 109.92Q299.79 113.14 293.03 113.14L293.03 113.14Q287.00 113.14 282.32 110.18Q277.64 107.22 275.98 102.43L275.98 102.43L277.22 102.43L277.22 123.65Q277.22 127.60 275.20 129.63Q273.17 131.66 269.42 131.66ZM288.35 101.39L288.35 101.39Q291.68 101.39 294.23 99.73Q296.78 98.06 298.18 94.79Q299.58 91.51 299.58 86.42L299.58 86.42Q299.58 78.82 296.46 75.24Q293.34 71.65 288.35 71.65L288.35 71.65Q285.02 71.65 282.48 73.21Q279.93 74.77 278.47 78.04Q277.02 81.32 277.02 86.42L277.02 86.42Q277.02 94.01 280.14 97.70Q283.26 101.39 288.35 101.39ZM332.86 131.66L332.86 131.66Q329.02 131.66 326.99 129.63Q324.96 127.60 324.96 123.65L324.96 123.65L324.96 68.01Q324.96 64.16 326.99 62.13Q329.02 60.10 332.66 60.10L332.66 60.10Q336.50 60.10 338.48 62.13Q340.46 64.16 340.46 68.01L340.46 68.01L340.46 75.08L339.31 71.02Q340.87 66.03 345.60 62.96Q350.34 59.90 356.47 59.90L356.47 59.90Q363.13 59.90 368.17 63.12Q373.22 66.34 376.02 72.27Q378.83 78.20 378.83 86.42L378.83 86.42Q378.83 94.63 376.02 100.66Q373.22 106.70 368.22 109.92Q363.23 113.14 356.47 113.14L356.47 113.14Q350.44 113.14 345.76 110.18Q341.08 107.22 339.42 102.43L339.42 102.43L340.66 102.43L340.66 123.65Q340.66 127.60 338.64 129.63Q336.61 131.66 332.86 131.66ZM351.79 101.39L351.79 101.39Q355.12 101.39 357.67 99.73Q360.22 98.06 361.62 94.79Q363.02 91.51 363.02 86.42L363.02 86.42Q363.02 78.82 359.90 75.24Q356.78 71.65 351.79 71.65L351.79 71.65Q348.46 71.65 345.92 73.21Q343.37 74.77 341.91 78.04Q340.46 81.32 340.46 86.42L340.46 86.42Q340.46 94.01 343.58 97.70Q346.70 101.39 351.79 101.39Z" fill="#1f2328"/>
+</svg>
