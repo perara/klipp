@@ -28,7 +28,7 @@ CI runs exactly these commands, so run them first ([AGENTS.md](AGENTS.md) has th
 
 | Command               | What it checks                                                                                     |
 | --------------------- | -------------------------------------------------------------------------------------------------- |
-| `npm run check`       | format, lint, typecheck, unit tests, build, and the package's exports                              |
+| `npm run check`       | format, build, lint, typecheck, unit tests, and the package's exports                              |
 | `npm run test:e2e`    | the example app under the dev server, a production build, on a touch phone, and as a paired device |
 | `npm run test:compat` | the packed package against Vite 5, 6, 7 and 8                                                      |
 

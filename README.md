@@ -202,7 +202,7 @@ talks, leans in while you point, and droops when something goes wrong.
 ## Development
 
 ```bash
-npm run check        # format, lint, typecheck, unit tests, build and package exports (CI `check`)
+npm run check        # format, build, lint, typecheck, unit tests and package exports (CI `check`)
 npm run test:e2e     # the example app under the dev server, a production build, touch, and a paired device
 npm run test:compat  # the packed package against Vite 5, 6, 7 and 8
 npm run demo:record  # re-record the demo GIF above (needs ffmpeg)

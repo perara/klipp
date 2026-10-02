@@ -54,7 +54,7 @@
     "test:e2e": "npm run build && playwright test",
     "test:compat": "npm run build && node scripts/compat/vite-compat.mjs",
     "check:package": "publint --strict && attw --pack . --profile esm-only",
-    "check": "npm run format && npm run lint && npm run typecheck && npm test && npm run build && npm run check:package",
+    "check": "npm run format && npm run build && npm run lint && npm run typecheck && npm test && npm run check:package",
     "example": "npm run build && vite examples/react-app",
     "demo:record": "npm run build && node scripts/demo/record.mjs",
     "brand": "node scripts/brand/brand.mjs",

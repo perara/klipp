@@ -12,10 +12,12 @@ working around it.
 | `e2e`                     | `npm run test:e2e`    |
 | `compat` (vite 5-8)       | `npm run test:compat` |
 
-`npm run check` is format, lint, typecheck, unit tests, build, and the package's exports
-(publint and Are The Types Wrong). `npm run test:e2e` builds the package, then drives the example
-app in `examples/react-app` four ways: under the dev server, as a production build under a base
-path, on a touch phone, and as another device that has to pair. `npm run test:compat` installs the packed package next to each
+`npm run check` is format, build, lint, typecheck, unit tests, and the package's exports
+(publint and Are The Types Wrong). It builds before linting because the example app imports the
+build, as an installed app would, so it passes from a clean checkout as it must in CI.
+`npm run test:e2e` builds the package, then drives the example app in `examples/react-app` four
+ways: under the dev server, as a production build under a base path, on a touch phone, and as
+another device that has to pair. `npm run test:compat` installs the packed package next to each
 supported Vite major and checks the build and the dev server.
 
 ## Rules
