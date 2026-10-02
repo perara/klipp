@@ -7,6 +7,8 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-02
+
 ### Added
 
 - Pointing at what a canvas draws. `klipp/canvas` has `registerCanvas` and adapters for
@@ -171,7 +173,8 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/perara/klipp/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/perara/klipp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/perara/klipp/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/perara/klipp/compare/v0.3.0...v0.3.1
