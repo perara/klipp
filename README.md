@@ -69,9 +69,16 @@ by your dev server with your own login. There are no API keys and nothing to hos
 Linux (on Windows, run the dev server in WSL). Element IDs tell instances apart through React;
 other JSX frameworks get the code location, without the call-site detail.
 
+Klipp installs from its GitHub release. npm 12 and later fetch a dependency from a URL only
+when the project allows it, so allow it for your project's own dependencies first:
+
 ```bash
+npm config set allow-remote root --location=project
 npm install -D https://github.com/perara/klipp/releases/download/v0.5.0/klipp-0.5.0.tgz
 ```
+
+The first line writes `allow-remote=root` to the project's `.npmrc`; commit it with the lockfile,
+which pins the tarball's checksum. Older npm versions need only the second line.
 
 ```ts
 // vite.config.ts

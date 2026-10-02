@@ -11,5 +11,9 @@ const rest = changelog.slice(start).split('\n').slice(1);
 const end = rest.findIndex((line) => /^## |^\[[^\]]+\]: /.test(line));
 const notes = (end < 0 ? rest : rest.slice(0, end)).join('\n').trim();
 if (!notes) throw new Error(`The CHANGELOG.md section for ${version} is empty.`);
-const install = `npm install -D https://github.com/perara/klipp/releases/download/v${version}/klipp-${version}.tgz`;
+const install = [
+  '# npm 12 and later: allow URL dependencies for this project first',
+  'npm config set allow-remote root --location=project',
+  `npm install -D https://github.com/perara/klipp/releases/download/v${version}/klipp-${version}.tgz`,
+].join('\n');
 process.stdout.write(`${notes}\n\n**Install**\n\n\`\`\`bash\n${install}\n\`\`\`\n`);
