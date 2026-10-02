@@ -17,10 +17,10 @@ export interface Vector3Like {
 
 /** The parts of a three.js camera Klipp uses. */
 interface CameraLike {
-  isPerspectiveCamera?: boolean;
-  isOrthographicCamera?: boolean;
+  isPerspectiveCamera?: boolean | undefined;
+  isOrthographicCamera?: boolean | undefined;
   projectionMatrix?: unknown;
-  projectionMatrixInverse?: { copy(matrix: unknown): { invert(): unknown } };
+  projectionMatrixInverse?: { copy(matrix: unknown): { invert(): unknown } } | undefined;
 }
 
 interface Matrix4Like {
@@ -38,11 +38,11 @@ export interface Object3DLike {
   userData: Record<string, unknown>;
   matrixWorld: unknown;
   geometry?: {
-    type?: string;
-    boundingBox?: { min: Vector3Like; max: Vector3Like } | null;
+    type?: string | undefined;
+    boundingBox?: { min: Vector3Like; max: Vector3Like } | null | undefined;
     computeBoundingBox?(): void;
   };
-  material?: { type?: string } | Array<{ type?: string }>;
+  material?: { type?: string | undefined } | Array<{ type?: string | undefined }> | undefined;
   /** An `InstancedMesh`'s per-instance matrix. */
   getMatrixAt?(index: number, matrix: unknown): void;
 }
@@ -50,14 +50,14 @@ export interface Object3DLike {
 export interface Intersection {
   object: Object3DLike;
   point: Vector3Like;
-  instanceId?: number;
+  instanceId?: number | undefined;
 }
 
 /** The parts of a three.js `Raycaster` Klipp uses. */
 export interface RaycasterLike {
   setFromCamera(coords: { x: number; y: number }, camera: unknown): void;
   intersectObjects(objects: Object3DLike[], recursive?: boolean): Intersection[];
-  ray?: { origin: Vector3Like; direction: Vector3Like };
+  ray?: { origin: Vector3Like; direction: Vector3Like } | undefined;
   camera?: unknown;
 }
 
@@ -72,11 +72,11 @@ export interface ThreeOptions {
   /** A `new THREE.Raycaster()`; a react-three-fiber app can pass its own `raycaster`. */
   raycaster: RaycasterLike;
   /** Leave objects out, such as helpers or an invisible ground plane. */
-  filter?: (object: Object3DLike) => boolean;
+  filter?: ((object: Object3DLike) => boolean) | undefined;
   /** A name for people. Default: the object's type and name. */
-  label?: (object: Object3DLike) => string | undefined;
+  label?: ((object: Object3DLike) => string | undefined) | undefined;
   /** `userData` keys whose values the agent may see. */
-  reveal?: string[];
+  reveal?: string[] | undefined;
 }
 
 const call = <T>(value: T | (() => T)): T =>

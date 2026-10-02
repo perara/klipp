@@ -11,7 +11,8 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "exactOptionalPropertyTypes": true
   },
   "include": ["src", "e2e", "playwright.config.ts", "vitest.config.ts"]
 }

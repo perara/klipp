@@ -1,6 +1,6 @@
 {
   "name": "klipp",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A paperclip in your web app that turns what testers notice into actionable tickets: it classifies bugs, feature requests and suggestions, asks for what's missing, and files them on GitHub, using your own Claude Code or Codex.",
   "keywords": [
     "vite-plugin",

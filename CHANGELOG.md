@@ -7,6 +7,14 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-02
+
+### Fixed
+
+- `klipp/canvas`'s types accept real MapLibre maps and three.js raycasters in projects that
+  compile with `exactOptionalPropertyTypes`. The example app compiles that way now, so it stays
+  so.
+
 ## [0.6.0] - 2026-10-02
 
 ### Added
@@ -173,7 +181,8 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/perara/klipp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/perara/klipp/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/perara/klipp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/perara/klipp/compare/v0.3.1...v0.4.0

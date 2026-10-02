@@ -2,12 +2,12 @@ import type { Box, CanvasAdapter, CanvasTarget, Details, Point } from './registr
 
 /** A rendered feature, as MapLibre GL (or Mapbox GL) returns it. */
 export interface MapFeature {
-  id?: string | number;
-  layer: { id: string; type?: string };
+  id?: string | number | undefined;
+  layer: { id: string; type?: string | undefined };
   source: string;
-  sourceLayer?: string;
+  sourceLayer?: string | undefined;
   geometry: { type: string; coordinates?: unknown };
-  properties?: Record<string, unknown> | null;
+  properties?: Record<string, unknown> | null | undefined;
 }
 
 /** The parts of a MapLibre GL map Klipp uses. */
@@ -25,16 +25,16 @@ export interface MapLike {
 
 export interface MapLibreOptions {
   /** Only features in these layers. Default: every rendered layer, the base map's too. */
-  layers?: string[];
+  layers?: string[] | undefined;
   /** A feature's id, for links. Default: the feature's own `id`. */
-  id?: (feature: MapFeature) => string | number | undefined;
+  id?: ((feature: MapFeature) => string | number | undefined) | undefined;
   /** A name for people, such as the feature's title. Default: its geometry, id and layer. */
-  label?: (feature: MapFeature) => string | undefined;
+  label?: ((feature: MapFeature) => string | undefined) | undefined;
   /**
    * Properties whose values the agent may see, such as `kind` or `status`. Every other
    * property is named without its value, since features can carry names and addresses.
    */
-  reveal?: string[];
+  reveal?: string[] | undefined;
 }
 
 /** How many coordinates go into a feature's box; enough for its extent, cheap on huge shapes. */

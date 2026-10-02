@@ -23,11 +23,11 @@ export interface CanvasTarget {
   key: string;
   /** For people: `Polygon 7 in layer search-areas`, `Mesh "Crate"`. */
   label: string;
-  details?: Details;
+  details?: Details | undefined;
   /** The source id of the JSX that made it, as on `data-klipp`, for react-three-fiber objects. */
-  sid?: string;
+  sid?: string | undefined;
   /** Where it is on screen now, in viewport pixels. */
-  box?: Box;
+  box?: Box | undefined;
 }
 
 /** Tells Klipp what a canvas draws. */
