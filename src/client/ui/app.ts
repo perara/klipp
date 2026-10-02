@@ -1,3 +1,4 @@
+import type { CanvasTarget } from '../../canvas/registry.js';
 import { HOST_ATTR, parseId } from '../../shared/id.js';
 import type { KlippManifest } from '../../shared/manifest.js';
 import type {
@@ -8,17 +9,18 @@ import type {
   PageContext,
 } from '../../shared/protocol.js';
 import type { RuntimeConfig } from '../../shared/runtime-config.js';
+import { findTarget, isCanvas, middleOf, targetAt } from '../canvas-targets.js';
 import { answerTool, fileIssue, listAgents, talk, Unreachable } from '../chat-client.js';
 import { elementContext, pageContext, type Probe } from '../context.js';
 import { anchorOf, identify, resolve } from '../identify.js';
 import { loadManifest } from '../manifest.js';
-import { elementFacts, issueFooter } from '../report.js';
+import { elementFacts, issueFooter, plain } from '../report.js';
 import { ChatView, type Reply, type TicketCard } from './chat.js';
 import type { Ticket } from '../../shared/ticket.js';
 import { adoptStyles, h } from './dom.js';
 import { Figure } from './figure.js';
 import { Overlay } from './overlay.js';
-import { centerOf, pageElementsAt, startPicker, type Point } from './picker.js';
+import { pageElementsAt, startPicker, type Point } from './picker.js';
 import { CSS } from './styles.js';
 
 export interface KlippApp {
@@ -37,6 +39,8 @@ export interface KlippApp {
 export interface Picked {
   element: Element;
   point: Point;
+  /** What is drawn there, when the element is a canvas the app registered. */
+  target?: CanvasTarget;
 }
 
 type Mode = 'closed' | 'open' | 'picking';
@@ -183,14 +187,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
   const overlay = new Overlay(ui.layer);
 
   const probe: Probe = {
-    hitTest: (x, y) => {
-      ui.host.classList.add('probing');
-      try {
-        return document.elementFromPoint(x, y);
-      } finally {
-        ui.host.classList.remove('probing');
-      }
-    },
+    hitTest: (x, y) => pageElementsAt(ui.host, { x, y })[0] ?? null,
     elementsAt: (x, y) => pageElementsAt(ui.host, { x, y }),
   };
 
@@ -204,42 +201,64 @@ export function createApp(config: RuntimeConfig): KlippApp {
     return { anchor, sid, entry: sid ? manifest?.entries[sid] : undefined };
   }
 
-  /** The overlay label: tag, component, file and line. */
-  function label(element: Element): string {
+  const fileOf = (path: string) => path.split('/').at(-1);
+
+  /** The overlay label: tag, component, file and line; for a canvas, what is drawn there. */
+  function label(element: Element, target?: CanvasTarget): string {
     const { anchor, sid, entry } = entryOf(element);
     const tag = `<${element.localName}>`;
-    if (!sid) return `${tag} · not in the app's code`;
-    if (!entry) return `${tag} · ${sid}`;
-    const inside = anchor === element ? '' : ` in <${entry.name}>`;
-    return `${tag}${inside} · ${entry.owner} · ${entry.file.split('/').at(-1)}:${entry.line}`;
+    const drawnBy = target?.sid ? manifest?.entries[target.sid] : undefined;
+    if (target && drawnBy) {
+      return `${target.label} · ${drawnBy.owner} · ${fileOf(drawnBy.file)}:${drawnBy.line}`;
+    }
+    const where = !sid
+      ? `${tag} · not in the app's code`
+      : !entry
+        ? `${tag} · ${sid}`
+        : `${tag}${anchor === element ? '' : ` in <${entry.name}>`} · ${entry.owner} · ${fileOf(entry.file)}:${entry.line}`;
+    return target ? `${target.label} · ${where}` : where;
   }
 
-  /** How the chat names an element. */
-  function named(element: Element): string {
+  /** How the chat names what was picked. */
+  function named({ element, target }: Picked): string {
     const { entry } = entryOf(element);
+    if (target) {
+      // The component that drew it, else the one that holds the canvas.
+      const owner = (target.sid ? manifest?.entries[target.sid]?.owner : undefined) ?? entry?.owner;
+      return owner ? `${target.label} (${owner})` : target.label;
+    }
     const tag = `<${element.localName}>`;
     return entry ? `${tag} in ${entry.owner}` : tag;
   }
 
   async function contextOf(picked: Picked) {
     await refresh();
-    return elementContext(picked.element, manifest, probe, picked.point);
+    return elementContext(picked.element, manifest, probe, picked.point, picked.target);
   }
 
   function focusOn(picked: Picked, attach: boolean) {
     subject = picked;
-    overlay.show(picked.element, label(picked.element), true);
+    overlay.show(picked.element, label(picked.element, picked.target), true, picked.target?.box);
     attached = attach;
-    chat.attach(attach ? named(picked.element) : undefined);
+    chat.attach(attach ? named(picked) : undefined);
   }
 
   function pick(prompt = 'Click what you mean.'): Promise<Picked | undefined> {
     cancelPicking?.();
-    let hovered: Element | undefined;
+    let hovered: { element: Element; point?: Point } | undefined;
+    let frame = 0;
+    /** Once a frame at most: on a canvas, asking the adapter can take a few milliseconds. */
+    const showHover = () => {
+      if (frame || !hovered) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (mode !== 'picking' || !hovered) return;
+        const target = targetAt(hovered.element, hovered.point);
+        overlay.show(hovered.element, label(hovered.element, target), false, target?.box);
+      });
+    };
     // Labels need the manifest: relabel the hover once it arrives, and resolve only after it.
-    const loaded = refresh().then(() => {
-      if (mode === 'picking' && hovered) overlay.show(hovered, label(hovered));
-    });
+    const loaded = refresh().then(showHover);
     return new Promise((resolve) => {
       mode = 'picking';
       chat.hide();
@@ -253,9 +272,17 @@ export function createApp(config: RuntimeConfig): KlippApp {
         figure.mood = 'idle';
         mode = 'open';
         chat.show();
+        cancelAnimationFrame(frame);
+        frame = 0;
         if (!picked) {
-          if (subject) overlay.show(subject.element, label(subject.element), true);
-          else overlay.hide();
+          if (subject) {
+            overlay.show(
+              subject.element,
+              label(subject.element, subject.target),
+              true,
+              subject.target?.box,
+            );
+          } else overlay.hide();
         }
         void loaded.then(() => resolve(picked));
       };
@@ -264,12 +291,16 @@ export function createApp(config: RuntimeConfig): KlippApp {
         finish();
       };
       stopPicker = startPicker(ui.glass, ui.host, {
-        hover: (element) => {
-          hovered = element;
-          overlay.show(element, label(element));
+        hover: (element, point) => {
+          hovered = { element, ...(point ? { point } : {}) };
+          showHover();
         },
-        pick: (element, point) => finish({ element, point }),
+        pick: (element, point) => {
+          const target = targetAt(element, point);
+          finish({ element, point, ...(target ? { target } : {}) });
+        },
         cancel: () => finish(),
+        tracks: isCanvas,
       });
     });
   }
@@ -283,6 +314,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
     const element = subject?.element;
     return issueFooter({
       identity: element ? identify(element) : undefined,
+      target: subject?.target,
       facts: element
         ? elementFacts(
             element,
@@ -311,18 +343,22 @@ export function createApp(config: RuntimeConfig): KlippApp {
       return { id, content: JSON.stringify(await contextOf(picked)) };
     }
     if (call.name === 'inspect_element') {
-      const element = resolve(text(input.id)).element;
+      const wanted = text(input.id);
+      const element = resolve(wanted).element;
       if (!element) {
+        return { id, content: `No element with the ID ${wanted} is on the page.`, isError: true };
+      }
+      const key = parseId(wanted)?.target;
+      const target = key === undefined ? undefined : await findTarget(element, key, 2_000);
+      if (key !== undefined && !target) {
         return {
           id,
-          content: `No element with the ID ${text(input.id)} is on the page.`,
+          content: `The canvas is on the page, but it draws nothing called ${key} right now.`,
           isError: true,
         };
       }
-      return {
-        id,
-        content: JSON.stringify(await contextOf({ element, point: centerOf(element) })),
-      };
+      const picked = { element, point: middleOf(element, target), ...(target ? { target } : {}) };
+      return { id, content: JSON.stringify(await contextOf(picked)) };
     }
     // The server checked the ticket against its type before handing it over, and files it
     // from its own copy: the page adds only the details shown here.
@@ -412,6 +448,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
     figure.mood = failed ? 'sad' : 'idle';
   }
 
+  /** What the user typed while Klipp was still answering: sent together, once it is done. */
+  const queued: string[] = [];
+
   function send(text: string): boolean {
     if (pendingCard) {
       // The agent is waiting on the draft; what the user typed becomes the answer.
@@ -420,10 +459,15 @@ export function createApp(config: RuntimeConfig): KlippApp {
       pendingCard.supersede();
       return true;
     }
-    if (busy) return false;
+    chat.user(text);
+    if (busy) queued.push(text);
+    else run(text);
+    return true;
+  }
+
+  function run(text: string) {
     // Taken now, not after the element's context is ready, so a second message waits.
     busy = true;
-    chat.user(text);
     const carried = attached ? subject : undefined;
     attached = false;
     chat.attach(undefined);
@@ -436,9 +480,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
         figure.mood = 'sad';
       } finally {
         busy = false;
+        if (queued.length) run(queued.splice(0).join('\n\n'));
       }
     })();
-    return true;
   }
 
   const AGENT_KEY = 'klipp:agent';
@@ -512,8 +556,10 @@ export function createApp(config: RuntimeConfig): KlippApp {
   async function reveal(id: string) {
     greeted = true;
     open(false);
-    // The ID comes from a link anyone could craft: it is checked before it is shown.
-    if (!parseId(id)) {
+    // The ID comes from a link anyone could craft: it is checked before it is shown, and what
+    // it names on a canvas is never echoed back.
+    const parsed = parseId(id);
+    if (!parsed) {
       chat.reply("That link doesn't name an element I know how to find.");
       figure.mood = 'sad';
       return;
@@ -527,11 +573,20 @@ export function createApp(config: RuntimeConfig): KlippApp {
     element.scrollIntoView({ block: 'center', inline: 'nearest' });
     await new Promise(requestAnimationFrame);
     await refresh();
-    focusOn({ element, point: centerOf(element) }, true);
-    const { entry } = entryOf(element);
-    const where = entry ? ` (\`${entry.file.split('/').at(-1)}:${entry.line}\`)` : '';
+    const target =
+      parsed.target === undefined ? undefined : await findTarget(element, parsed.target);
+    const picked = { element, point: middleOf(element, target), ...(target ? { target } : {}) };
+    focusOn(picked, true);
+    if (parsed.target !== undefined && !target) {
+      chat.reply(
+        'I found the canvas from the link, but not what it points at on it. It may have moved out of view. What would you like to know?',
+      );
+      return;
+    }
+    const entry = target?.sid ? manifest?.entries[target.sid] : entryOf(element).entry;
+    const where = entry ? ` (\`${fileOf(entry.file)}:${entry.line}\`)` : '';
     chat.reply(
-      `This is the element from the link: **${named(element)}**${where}. What would you like to know about it?`,
+      `This is the ${target ? 'thing' : 'element'} from the link: **${plain(named(picked))}**${where}. What would you like to know about it?`,
     );
   }
 

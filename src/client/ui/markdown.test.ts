@@ -27,6 +27,12 @@ describe('renderMarkdown', () => {
     );
   });
 
+  it('shows backslash-escaped punctuation as it is, so escaped text stays text', () => {
+    expect(html('\\<li\\> in \\*App\\* \\[x](https://e.example) a\\b')).toBe(
+      '<p>&lt;li&gt; in *App* [x](https://e.example) a\\b</p>',
+    );
+  });
+
   it('never turns model output into markup or script links', () => {
     expect(html('<img src=x onerror=alert(1)> [x](javascript:alert(1))')).toBe(
       '<p>&lt;img src=x onerror=alert(1)&gt; <code>x</code>)</p>',

@@ -23,6 +23,26 @@ export interface ElementRef {
   component?: string;
 }
 
+/** Code a manifest entry points at. */
+export interface CodeLocation {
+  file: string;
+  line: number;
+  column: number;
+  component: string;
+  permalink?: string;
+  changedLocally?: boolean;
+}
+
+/** Something drawn on a canvas, as the app's canvas adapter describes it. */
+export interface CanvasContext {
+  /** Names it on the canvas; the element's id with `@key` names it on the page. */
+  key: string;
+  label: string;
+  details?: Record<string, string | number | boolean>;
+  /** The JSX that made it, for react-three-fiber objects. */
+  code?: CodeLocation;
+}
+
 /** What Klipp knows about one element. Structure and state, never its text. */
 export interface ElementContext {
   /** The Klipp ID, or '' when nothing at or above it was stamped by the build. */
@@ -31,14 +51,9 @@ export interface ElementContext {
   attributes: string[];
   states: string[];
   box: string;
-  code?: {
-    file: string;
-    line: number;
-    column: number;
-    component: string;
-    permalink?: string;
-    changedLocally?: boolean;
-  };
+  code?: CodeLocation;
+  /** When the element is a canvas the app registered: what is drawn where the user pointed. */
+  canvas?: CanvasContext;
   /** The component call sites that led here, nearest first. */
   renderedBy: Array<{ component: string; usedIn: string; file: string; line: number }>;
   /** Child path into markup the build did not stamp, such as a library's DOM. */

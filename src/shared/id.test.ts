@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatId, instanceHash, parseId, sourceId } from './id.js';
+import { formatId, instanceHash, parseId, sourceId, withTarget } from './id.js';
 
 describe('ids', () => {
   it('derives the same sid from the same place in the source', () => {
@@ -31,8 +31,42 @@ describe('ids', () => {
     expect(parseId(' 3f9a2c1d ')).toEqual({ sid: '3f9a2c1d', ordinal: 1, path: [] });
   });
 
+  it('steps into shadow roots and names what a canvas drew', () => {
+    const id = {
+      sid: '3f9a2c1d',
+      instance: 'x7k2',
+      ordinal: 1,
+      path: [2, 's' as const, 0],
+      target: "roads:42 (north) it's",
+    };
+    const text = formatId(id);
+    expect(text).toBe('3f9a2c1d.x7k2/2/s/0@roads%3A42%20%28north%29%20it%27s');
+    expect(parseId(text)).toEqual(id);
+    expect(withTarget('3f9a2c1d.x7k2', 'a/b')).toBe('3f9a2c1d.x7k2@a%2Fb');
+    expect(parseId('3f9a2c1d@roads:42/a')?.target).toBe('roads:42/a');
+    expect(parseId('3f9a2c1d@a%2Fb')).toEqual({
+      sid: '3f9a2c1d',
+      ordinal: 1,
+      path: [],
+      target: 'a/b',
+    });
+  });
+
   it('rejects anything else', () => {
-    for (const text of ['', '3f9a2c1', '3F9A2C1D', '3f9a2c1d.x7k', '3f9a2c1d:0', '3f9a2c1d/a']) {
+    for (const text of [
+      '',
+      '3f9a2c1',
+      '3F9A2C1D',
+      '3f9a2c1d.x7k',
+      '3f9a2c1d:0',
+      '3f9a2c1d/a',
+      '3f9a2c1d/S',
+      '3f9a2c1d@',
+      '3f9a2c1d@a b',
+      '3f9a2c1d@%E0%A4%A',
+      '3f9a2c1d@%ZZ',
+      '3f9a2c1d@`x`',
+    ]) {
       expect(parseId(text)).toBeUndefined();
     }
   });

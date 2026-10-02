@@ -73,6 +73,57 @@ describe('identify without React', () => {
   });
 });
 
+describe('identify through shadow roots', () => {
+  beforeEach(() => {
+    page(`<section ${HOST_ATTR}="${SID.list}"><p>intro</p><star-rating></star-rating></section>
+      <div ${HOST_ATTR}="${SID.row}" id="portal-host"></div>`);
+    // A web component's own markup, which the build never stamped.
+    const rating = document.querySelector('star-rating')!.attachShadow({ mode: 'open' });
+    rating.innerHTML = '<style></style><div><button>1</button><button>2</button></div>';
+    // Markup the app's own JSX rendered into a shadow root, stamped as usual.
+    const portal = document.querySelector('#portal-host')!.attachShadow({ mode: 'open' });
+    portal.innerHTML = `<p ${HOST_ATTR}="${SID.label}"><b>x</b></p>`;
+  });
+
+  const inRating = () =>
+    document.querySelector('star-rating')!.shadowRoot!.querySelectorAll('button')[1]!;
+  const inPortal = () => document.querySelector('#portal-host')!.shadowRoot!.querySelector('b')!;
+
+  it('steps into a shadow root from the nearest stamped element outside it', () => {
+    const identity = identify(inRating());
+    expect(identity.anchor).toBe(document.querySelector('section'));
+    expect(identity.path).toEqual([1, 's', 1, 1]);
+    expect(identity.id).toMatch(/^aaaaaaaa\.[0-9a-z]{4}\/1\/s\/1\/1$/);
+    expect(resolve(identity.id).element).toBe(inRating());
+  });
+
+  it('finds stamped elements inside a shadow root, and counts their hosts as call sites', () => {
+    const identity = identify(inPortal());
+    expect(identity.sid).toBe(SID.label);
+    expect(identity.path).toEqual([0]);
+    expect(identity.ancestry.callSites).toEqual([SID.row]);
+    expect(resolve(identity.id).element).toBe(inPortal());
+    expect(resolve(SID.label).candidates).toHaveLength(1);
+  });
+
+  it('resolves every id it hands out back to the same element', () => {
+    const all = (root: Document | ShadowRoot): Element[] =>
+      [...root.querySelectorAll('*')].flatMap((el) => [
+        el,
+        ...(el.shadowRoot ? all(el.shadowRoot) : []),
+      ]);
+    for (const el of all(document)) {
+      const { id } = identify(el);
+      if (id) expect(resolve(id).element).toBe(el);
+    }
+  });
+
+  it('gives up on a path into a shadow root that is not there', () => {
+    const id = identify(inRating()).id.replace('/s/', '/0/');
+    expect(resolve(id).element).toBeUndefined();
+  });
+});
+
 describe('identify with React fibers', () => {
   it('follows keys, so a row keeps its id when the list reorders', () => {
     page(`<li ${HOST_ATTR}="${SID.row}"></li><li ${HOST_ATTR}="${SID.row}"></li>`);

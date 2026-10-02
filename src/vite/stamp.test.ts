@@ -70,11 +70,36 @@ describe('stamp', () => {
     expect(result?.entries).toHaveLength(1);
   });
 
-  it('skips lowercase tags in react-three-fiber files, which are three.js objects', async () => {
+  it('gives react-three-fiber objects their sid in userData, and leaves other three.js tags alone', async () => {
     const result = await run(
-      "import { Canvas } from '@react-three/fiber';\nexport const S = () => <mesh><boxGeometry /></mesh>;",
+      [
+        "import { Canvas } from '@react-three/fiber';",
+        'export const S = () => (',
+        '  <group>',
+        '    <mesh name="crate"><boxGeometry /><meshStandardMaterial color="red" /></mesh>',
+        '    <color attach="background" args={["#fff"]} />',
+        '  </group>',
+        ');',
+        'export const Page = () => <main><star-rating /><Canvas><S /></Canvas><svg><path d="" /></svg></main>;',
+      ].join('\n'),
     );
-    expect(result).toBeUndefined();
+    const group = sourceId('src/App.tsx', 3, 3);
+    const mesh = sourceId('src/App.tsx', 4, 5);
+    expect(result?.code).toContain(`<group userData-klipp="${group}">`);
+    expect(result?.code).toContain(`<mesh name="crate" userData-klipp="${mesh}">`);
+    expect(result?.code).toContain('<boxGeometry />');
+    expect(result?.code).toContain('<color attach="background" args={["#fff"]} />');
+    // The DOM elements in the same file are stamped as elements; `path` is left alone.
+    expect(result?.code).toMatch(/<main data-klipp="\w{8}"><star-rating data-klipp="\w{8}" ?\/>/);
+    expect(result?.code).toMatch(/<svg data-klipp="\w{8}"><path d="" \/><\/svg>/);
+    expect(result?.entries.map(([, e]) => e.name)).toEqual([
+      'group',
+      'mesh',
+      'main',
+      'star-rating',
+      'S',
+      'svg',
+    ]);
   });
 
   it('keeps an attribute the author already wrote', async () => {

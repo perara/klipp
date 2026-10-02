@@ -1,20 +1,29 @@
+import { composedParent, deepen } from '../composed.js';
+
 export interface Point {
   x: number;
   y: number;
 }
 
 export interface PickerEvents {
-  hover(element: Element): void;
+  /** The pointer is over `element`, at `point` when the pointer (not the keyboard) got there. */
+  hover(element: Element, point?: Point): void;
   pick(element: Element, point: Point): void;
   cancel(): void;
+  /** Whether what is under the pointer changes within this element, as on a canvas. */
+  tracks?(element: Element): boolean;
 }
 
-/** Page elements under a point, topmost first, leaving out Klipp's own UI. */
+/** Page elements under a point, topmost first, inside open shadow roots too, leaving out Klipp. */
 export function pageElementsAt(host: Element, point: Point): Element[] {
-  return document
+  const page = document
     .elementsFromPoint(point.x, point.y)
     .filter((el) => el !== host && el !== document.documentElement && !host.contains(el));
+  return deepen(page, point.x, point.y);
 }
+
+const isPage = (element: Element | null) =>
+  element !== null && element !== document.documentElement;
 
 export function centerOf(element: Element): Point {
   const r = element.getBoundingClientRect();
@@ -22,7 +31,7 @@ export function centerOf(element: Element): Point {
 }
 
 function scrollUnder(element: Element | undefined, dx: number, dy: number) {
-  for (let el = element; el; el = el.parentElement ?? undefined) {
+  for (let el = element; el; el = composedParent(el) ?? undefined) {
     const style = getComputedStyle(el);
     const scrollsY =
       /(auto|scroll|overlay)/.test(style.overflowY) && el.scrollHeight > el.clientHeight;
@@ -71,13 +80,14 @@ export function startPicker(glass: HTMLElement, host: Element, events: PickerEve
     current = element;
     navigated = byKeyboard;
     if (!byKeyboard) trail.length = 0;
-    events.hover(element);
+    events.hover(element, byKeyboard ? undefined : last);
   };
 
   const onMove = (event: PointerEvent) => {
     last = { x: event.clientX, y: event.clientY };
     const element = at(last);
-    if (element && element !== current && !navigated) hover(element);
+    const moved = element !== current || (element !== undefined && events.tracks?.(element));
+    if (element && moved && !navigated) hover(element);
     if (navigated && (Math.abs(event.movementX) > 2 || Math.abs(event.movementY) > 2)) {
       navigated = false;
       if (element) hover(element);
@@ -115,13 +125,9 @@ export function startPicker(glass: HTMLElement, host: Element, events: PickerEve
     } else if (event.key === 'Enter' && current) {
       stop();
       events.pick(current, last.x >= 0 ? last : centerOf(current));
-    } else if (
-      event.key === 'ArrowUp' &&
-      current?.parentElement &&
-      current.parentElement !== document.documentElement
-    ) {
+    } else if (event.key === 'ArrowUp' && current && isPage(composedParent(current))) {
       trail.push(current);
-      hover(current.parentElement, true);
+      hover(composedParent(current)!, true);
     } else if (event.key === 'ArrowDown' && trail.length) {
       hover(trail.pop()!, true);
     } else {

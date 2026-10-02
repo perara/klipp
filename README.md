@@ -147,8 +147,10 @@ is written. Nobody writes IDs by hand. The full ID is the same for every user an
 and it leads back to a file and line:
 
 ```
-3f9a2c1d.x7k2:2/1/0
-└ sid ──┘ └inst┘ │ └ path into markup the build didn't stamp (third-party DOM)
+3f9a2c1d.x7k2:2/1/s/0@search-areas%3A7
+└ sid ──┘ └inst┘ │ └──┬──┘ └ something drawn on a canvas, such as a map feature
+                 │    └ path into markup the build didn't stamp (third-party DOM),
+                 │      where s steps into a web component's shadow root
                  └ which one, when identical instances repeat
 ```
 
@@ -157,9 +159,48 @@ shared `<Button>` used in two places gets two IDs, and a list row keeps its ID w
 reorders. Open `https://your.app/page?klipp=3f9a2c1d.x7k2` and Klipp opens on that element. In
 the DevTools console, `klipp.id($0)` gives an element's ID and `klipp.find(id)` finds it.
 
+Web components work too: Klipp points into open shadow roots, and an ID steps into one with `s`.
+
+### Maps, 3D and other canvases
+
+A canvas has no elements inside it, so on its own, pointing at a map or a 3D scene stops at the
+canvas. Tell Klipp what the canvas draws, and testers point at the feature or the object itself:
+the chat, the agent and the ticket name it, and a link brings it back.
+
+```ts
+import { maplibreTargets, registerCanvas, threeTargets } from 'klipp/canvas';
+
+// A MapLibre GL map: the topmost rendered feature, by its layer and id.
+registerCanvas(map.getCanvas(), maplibreTargets(map, { layers: ['incidents'], reveal: ['kind'] }));
+
+// A three.js scene: the nearest visible object, by its name down the scene graph.
+registerCanvas(renderer.domElement, threeTargets({ scene, camera, raycaster: new Raycaster() }));
+```
+
+With react-three-fiber, register inside `<Canvas>`. Klipp's build also stamps each `<mesh>`,
+`<group>` and the like with where it is written, so pointing at a 3D object leads to its JSX:
+
+```tsx
+function KlippTargets() {
+  const { gl, scene, camera, raycaster } = useThree();
+  useEffect(
+    () => registerCanvas(gl.domElement, threeTargets({ scene, camera, raycaster })),
+    [gl, scene, camera, raycaster],
+  );
+  return null;
+}
+```
+
+Anything else that draws (a chart, a game, another map library) takes an adapter of your own:
+`at(point, canvas)` returns what is drawn at a point, as `{ key, label, details, box }`, and
+`find(key, canvas)` finds it again for a link. Map features are described by their layer,
+source, geometry and id; property values stay out unless you name them in `reveal`.
+Registering does nothing where Klipp isn't running. To keep it out of production bundles
+entirely, register from a dynamic import behind `if (import.meta.env.DEV)`.
+
 ## Privacy and safety
 
-- **No page text.** The agent sees structure and state, never the text on the page or form values. Console errors are sent by name and message; objects logged with them are named, not opened. Query values in addresses are blanked, except the ones you list in `keepQuery`.
+- **No page text.** The agent sees structure and state, never the text on the page or form values. Console errors are sent by name and message; objects logged with them are named, not opened. Map features and 3D objects are described by their layer, geometry, type and name; their properties' values only when the app names them in `reveal`. Query values in addresses are blanked, except the ones you list in `keepQuery`.
 - **Read-only agents, kept to your repository.** Claude runs `--restricted` with only Read, Grep and Glob: no shell, no web, and `.env`, key and credential files are denied. Codex runs in a sandbox that reads only the repository and the system files programs need, and writes nothing; its commands get only a core environment. Neither loads your own settings or other MCP servers, and neither gets the dev server's environment beyond what it needs to start and log in.
 - **Your browser only.** The chat answers a browser on this machine at `localhost`, from the page itself. Other names, tunnels and proxies are turned away, even from loopback, so a site that rebinds its name to `127.0.0.1` gets nothing. With `chat.allowRemote`, other devices pair once with the code the dev server prints.
 - **Nothing filed without a click.** The card shows the whole ticket first, and the server files only the ticket the agent proposed, once.
@@ -201,8 +242,8 @@ talks, leans in while you point, and droops when something goes wrong.
 
 ## Limits
 
-- Content drawn on a canvas (maps, WebGL scenes) has no DOM, so pointing stops at the canvas.
-- Markup inside other components' shadow roots isn't reached.
+- A canvas the app hasn't registered is pointed at as a whole: Klipp can't see what it draws.
+- Closed shadow roots can't be reached by any script on the page, Klipp's included.
 - Permalinks and tickets use GitHub.
 - Codex can read every file in the repository, `.env` files included; Claude is denied those. Keep secrets out of the working tree, or use Claude.
 

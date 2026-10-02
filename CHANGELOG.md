@@ -7,6 +7,27 @@ behaviour or options.
 
 ## [Unreleased]
 
+### Added
+
+- Pointing at what a canvas draws. `klipp/canvas` has `registerCanvas` and adapters for
+  MapLibre GL (`maplibreTargets`: the topmost rendered feature, by layer and id, property values
+  only when named in `reveal`) and three.js (`threeTargets`: the nearest visible object, by its
+  name down the scene graph, instanced meshes by instance). The chat, the agent's context, the
+  ticket and links all name the feature or object; an ID names it with `@key`.
+- react-three-fiber objects (`<mesh>`, `<group>` and the like) carry where they are written, as
+  `userData.klipp`, so pointing at a 3D object leads to its JSX.
+- Web components: Klipp points into open shadow roots, an ID steps into one with `s`, and the
+  app's own JSX rendered into a shadow root keeps its ID and is found by links.
+- The example app has a page with a MapLibre map, a react-three-fiber scene and web components.
+
+### Fixed
+
+- A message typed while Klipp was still finishing its answer was dropped; it is now shown at
+  once and sent as soon as the answer is done.
+- In files that use react-three-fiber, DOM elements (`<div>`, `<button>`, custom elements)
+  weren't stamped; only three.js tags are left alone now.
+- Backslash-escaped text in Klipp's replies shows without the backslashes.
+
 ## [0.5.0] - 2026-10-02
 
 ### Security

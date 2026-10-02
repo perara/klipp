@@ -1,4 +1,7 @@
+import type { CanvasTarget } from '../canvas/registry.js';
+import { withTarget } from '../shared/id.js';
 import { isDirty, permalink, type KlippManifest, type ManifestEntry } from '../shared/manifest.js';
+import { composedClosest, composedContains } from './composed.js';
 import type { Identity } from './identify.js';
 
 /** Structure and state of an element. No text, no values. */
@@ -39,7 +42,7 @@ export function elementFacts(
     const value = el.getAttribute(name);
     if (value !== null) states.push(`${name}=${value}`);
   }
-  if (el.closest('[inert]')) states.push('inert');
+  if (composedClosest(el, '[inert]')) states.push('inert');
   if (getComputedStyle(el).pointerEvents === 'none') states.push('pointer-events: none');
   const visible =
     typeof el.checkVisibility === 'function'
@@ -52,7 +55,7 @@ export function elementFacts(
     states.push('outside the viewport');
   } else {
     const hit = hitTest(r.left + r.width / 2, r.top + r.height / 2);
-    if (hit && hit !== el && !el.contains(hit)) {
+    if (hit && !composedContains(el, hit)) {
       states.push(`clicks at its centre land on ${describe(hit)}`);
     }
   }
@@ -143,22 +146,34 @@ function buildLine(manifest: KlippManifest | undefined): string {
 export interface FooterInput {
   identity: Identity | undefined;
   facts: Facts | undefined;
+  /** What a canvas adapter says is drawn where the user pointed. */
+  target?: CanvasTarget | undefined;
   manifest: KlippManifest | undefined;
   href: string;
   browser: string;
   keepQuery?: readonly string[];
 }
 
+/** Text an app or a page supplied, kept from turning into links, code or markup. */
+export const plain = (text: string) => text.replace(/[\\`*_[\]<>]/g, '\\$&');
+
 /** The details Klipp appends to every issue it files: element, code, page, build, browser. */
 export function issueFooter(input: FooterInput): string {
-  const { identity, facts, manifest } = input;
+  const { identity, facts, manifest, target } = input;
   const lines = ['---', '', '| Klipp | |', '| --- | --- |'];
   const row = (label: string, value: string) =>
     lines.push(`| ${label} | ${value.replace(/\|/g, '\\|').replace(/\n/g, ' ')} |`);
   const entry = identity?.sid ? manifest?.entries[identity.sid] : undefined;
+  const id = identity?.id && target ? withTarget(identity.id, target.key) : identity?.id;
   if (identity && facts) {
     const element = [`\`<${facts.tag}>\``, ...facts.attributes.map((a) => `\`${a}\``)].join(' ');
-    row('Element', identity.id ? `\`${identity.id}\` ${element}` : element);
+    row('Element', id ? `\`${id}\` ${element}` : element);
+    if (target) {
+      row('Drawn', plain(target.label));
+      const drawnBy = target.sid ? manifest?.entries[target.sid] : undefined;
+      if (manifest && drawnBy)
+        row('Drawn by', `\`<${drawnBy.name}>\` in ${codeLink(manifest, drawnBy)}`);
+    }
     if (manifest && entry) row('Code', codeLink(manifest, entry));
     const chain = identity.ancestry.callSites
       .map((sid) => manifest?.entries[sid])
@@ -172,8 +187,8 @@ export function issueFooter(input: FooterInput): string {
   row('Page', `\`${redactedUrl(input.href, input.keepQuery)}\``);
   row('Build', buildLine(manifest));
   row('Browser', input.browser);
-  if (identity?.id) {
-    lines.push('', `Open the element: ${deepLink(input.href, identity.id, input.keepQuery)}`);
+  if (identity?.id && id) {
+    lines.push('', `Open the element: ${deepLink(input.href, id, input.keepQuery)}`);
     lines.push('', `<sub>klipp:${identity.sid}</sub>`);
   }
   return lines.join('\n');

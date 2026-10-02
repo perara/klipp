@@ -113,6 +113,15 @@ test('a bug becomes a ticket that is filed only when you say so, labelled as a b
   await expect(replies(page).last()).toHaveText('Filed! 📎');
 });
 
+test('a message sent while Klipp is answering is answered next, not lost', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'hello');
+  await ask(page, 'who are you?');
+  await expect(input(page)).toHaveValue('');
+  await expect(replies(page).last()).toHaveText('I am Claude, in a paperclip.');
+  await expect(replies(page).filter({ hasText: 'Hello! I am a test paperclip.' })).toHaveCount(1);
+});
+
 test('a feature request needs the need behind it before it is shown', async ({ page }) => {
   await openChat(page);
   await ask(page, 'I have an idea: a dark mode toggle');

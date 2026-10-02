@@ -5,6 +5,8 @@ const BUILD = 'http://127.0.0.1:5282/sub/';
 /** The dev server as another device sees it: by a name that isn't localhost. */
 const REMOTE = 'http://laptop.test:5283/';
 const permissions = ['clipboard-read', 'clipboard-write'];
+// Software WebGL, for the map and the 3D scene on runners without a GPU.
+const launchOptions = { args: ['--enable-unsafe-swiftshader'] };
 
 /** The example app twice: under the dev server, and as a production build with a base path. */
 export default defineConfig({
@@ -38,12 +40,12 @@ export default defineConfig({
     {
       name: 'dev',
       testIgnore: /touch|remote/,
-      use: { ...devices['Desktop Chrome'], baseURL: DEV, permissions },
+      use: { ...devices['Desktop Chrome'], baseURL: DEV, permissions, launchOptions },
     },
     {
       name: 'build',
       testIgnore: /touch|remote/,
-      use: { ...devices['Desktop Chrome'], baseURL: BUILD, permissions },
+      use: { ...devices['Desktop Chrome'], baseURL: BUILD, permissions, launchOptions },
     },
     {
       name: 'touch',

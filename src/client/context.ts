@@ -1,7 +1,15 @@
-import { HOST_ATTR } from '../shared/id.js';
+import type { CanvasTarget } from '../canvas/registry.js';
+import { HOST_ATTR, withTarget } from '../shared/id.js';
 import { isDirty, permalink, type KlippManifest } from '../shared/manifest.js';
-import type { ElementContext, ElementRef, PageContext } from '../shared/protocol.js';
+import type {
+  CanvasContext,
+  CodeLocation,
+  ElementContext,
+  ElementRef,
+  PageContext,
+} from '../shared/protocol.js';
 import { failedRequests, recentErrors } from './capture.js';
+import { composedParent } from './composed.js';
 import { anchorOf, identify } from './identify.js';
 import { elementFacts, redactedUrl } from './report.js';
 
@@ -27,40 +35,62 @@ const describe = (element: Element) => {
   return id ? `<${element.localName}> ${id}` : `<${element.localName}>`;
 };
 
-/** What the model is told about an element, picked at `point` (its centre when not given). */
+/** Where a manifest entry is in the code, with its permalink when the build has one. */
+function locate(
+  manifest: KlippManifest | undefined,
+  sid: string | undefined,
+): CodeLocation | undefined {
+  const entry = sid ? manifest?.entries[sid] : undefined;
+  if (!manifest || !entry) return undefined;
+  const url = permalink(manifest, entry);
+  return {
+    file: entry.file,
+    line: entry.line,
+    column: entry.column,
+    component: entry.owner,
+    ...(url ? { permalink: url } : {}),
+    ...(isDirty(manifest, entry) ? { changedLocally: true } : {}),
+  };
+}
+
+function canvasContext(target: CanvasTarget, manifest: KlippManifest | undefined): CanvasContext {
+  const code = locate(manifest, target.sid);
+  return {
+    key: target.key,
+    label: target.label,
+    ...(target.details ? { details: target.details } : {}),
+    ...(code ? { code } : {}),
+  };
+}
+
+/**
+ * What the model is told about an element, picked at `point` (its centre when not given), and
+ * for a registered canvas, about what is drawn there.
+ */
 export function elementContext(
   element: Element,
   manifest: KlippManifest | undefined,
   probe: Probe,
   point?: { x: number; y: number },
+  target?: CanvasTarget,
 ): ElementContext {
   const identity = identify(element);
   const facts = elementFacts(element, probe.hitTest, describe);
-  const entry = identity.sid ? manifest?.entries[identity.sid] : undefined;
   const r = element.getBoundingClientRect();
   const at = point ?? { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   const stack = probe.elementsAt(at.x, at.y);
   const below = stack.indexOf(element) >= 0 ? stack.slice(stack.indexOf(element) + 1) : stack;
-  const parent = identity.anchor?.parentElement ? anchorOf(identity.anchor.parentElement) : null;
-  const url = manifest && entry ? permalink(manifest, entry) : undefined;
+  const above = identity.anchor ? composedParent(identity.anchor) : null;
+  const parent = above ? anchorOf(above) : null;
+  const code = locate(manifest, identity.sid);
   return {
-    id: identity.id,
+    id: identity.id && target ? withTarget(identity.id, target.key) : identity.id,
     tag: facts.tag,
     attributes: facts.attributes,
     states: facts.states,
     box: facts.box,
-    ...(entry
-      ? {
-          code: {
-            file: entry.file,
-            line: entry.line,
-            column: entry.column,
-            component: entry.owner,
-            ...(url ? { permalink: url } : {}),
-            ...(manifest && isDirty(manifest, entry) ? { changedLocally: true } : {}),
-          },
-        }
-      : {}),
+    ...(code ? { code } : {}),
+    ...(target ? { canvas: canvasContext(target, manifest) } : {}),
     renderedBy: identity.ancestry.callSites.slice(0, 8).flatMap((sid) => {
       const site = manifest?.entries[sid];
       return site

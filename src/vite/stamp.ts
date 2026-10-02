@@ -1,6 +1,7 @@
 import { parse, type ParserPlugin } from '@babel/parser';
 import MagicString, { type SourceMap } from 'magic-string';
-import { CALL_SITE_PROP, HOST_ATTR, sourceId } from '../shared/id.js';
+import { CALL_SITE_PROP, HOST_ATTR, OBJECT_KEY, sourceId } from '../shared/id.js';
+import { DOM_TAGS } from './dom-tags.js';
 import type { ManifestEntry } from '../shared/manifest.js';
 
 export interface StampContext {
@@ -57,6 +58,29 @@ const REACT_BUILTINS = new Set([
   'Activity',
   'ViewTransition',
 ]);
+
+/**
+ * react-three-fiber tags that make a three.js `Object3D`, which has `userData`: these carry their
+ * sid as `userData-klipp`, which react-three-fiber sets as `object.userData.klipp`. Other
+ * lowercase tags in those files (materials, geometries, colours) are left alone.
+ */
+const OBJECT3D_TAGS = new Set([
+  'mesh',
+  'instancedMesh',
+  'batchedMesh',
+  'skinnedMesh',
+  'group',
+  'object3D',
+  'points',
+  'line',
+  'lineSegments',
+  'lineLoop',
+  'sprite',
+  'lOD',
+  'bone',
+  'scene',
+]);
+const OBJECT_ATTR = `userData-${OBJECT_KEY}`;
 
 const isNode = (value: unknown): value is AstNode =>
   typeof value === 'object' && value !== null && typeof (value as AstNode).type === 'string';
@@ -173,8 +197,9 @@ export async function stamp(
   if (!program) return undefined;
   const { sites, imports } = collect(program, ctx.file);
   if (!sites.length) return undefined;
-  // In react-three-fiber files, lowercase tags are three.js objects, not DOM elements.
+  // In react-three-fiber files, lowercase tags can be three.js objects as well as DOM elements.
   const threeFiber = [...imports.values()].some((s) => s.startsWith('@react-three/'));
+  const isElement = (name: string) => !threeFiber || DOM_TAGS.has(name) || name.includes('-');
   const external = ctx.stampComponents
     ? await externalComponents(sites, imports, ctx)
     : new Set<string>();
@@ -183,10 +208,11 @@ export async function stamp(
   const entries: Array<[string, ManifestEntry]> = [];
   for (const { node, name, owner } of sites) {
     const host = isHostName(name);
+    const object = host && threeFiber && OBJECT3D_TAGS.has(name);
     const skip = host
-      ? threeFiber
+      ? !object && !isElement(name)
       : !ctx.stampComponents || REACT_BUILTINS.has(name) || external.has(name);
-    const attr = host ? HOST_ATTR : CALL_SITE_PROP;
+    const attr = object ? OBJECT_ATTR : host ? HOST_ATTR : CALL_SITE_PROP;
     if (skip || hasAttribute(node, attr)) continue;
     // Last among the attributes, so a spread written before it cannot override it.
     const end = node.end as number;

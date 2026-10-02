@@ -181,6 +181,13 @@ if (q.includes('what did i say')) {
   say(`DATABASE_URL: ${process.env.DATABASE_URL ? 'visible' : 'hidden'}`);
 } else if (q.includes('context')) {
   say(`page_context: ${message.split('</page_context>').length - 1} closing tag`);
+} else if (page.element?.canvas && q.includes('describe')) {
+  const { tag, id, canvas } = page.element;
+  const code = canvas.code ? `; made at ${canvas.code.file}:${canvas.code.line}` : '';
+  const facts = Object.entries(canvas.details ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ');
+  say(`${tag} ${id} draws ${canvas.label} (${facts})${code}`);
 } else if (page.element && q.includes('describe')) {
   const { tag, states, beneath } = page.element;
   say(

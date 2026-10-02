@@ -40,7 +40,9 @@ What it does to keep that safe:
   only you can read, or in an environment variable, never on the command line.
 - **No page text.** The agent gets the page's structure and state, never its text or form
   values. Console errors go by name and message; objects logged with them are named, not
-  serialized. Query values in addresses are blanked. The page context is escaped so it can't
+  serialized. Map features and 3D objects are described by their layer, geometry, type and
+  name; property values only when the app names them in `reveal`. Query values in addresses are
+  blanked. The page context is escaped so it can't
   close its own tag, and the agent is told it is data, not instructions.
 - **Your browser only.** The chat, tool-result and issue endpoints need:
   - the `X-Klipp` header, which a cross-site form can't send;

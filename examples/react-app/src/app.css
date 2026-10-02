@@ -41,3 +41,12 @@ body {
   position: absolute;
   inset: -4px;
 }
+.map,
+.scene {
+  height: 260px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.shadow-card {
+  margin-top: 12px;
+}

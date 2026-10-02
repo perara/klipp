@@ -1,6 +1,5 @@
 export const CSS = /* css */ `
 :host { all: initial; }
-:host(.probing) * { pointer-events: none !important; }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 

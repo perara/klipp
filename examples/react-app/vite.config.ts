@@ -21,8 +21,15 @@ const fakeFileIssue = (_draft: IssueDraft, labels: string[]) =>
 // KLIPP_E2E_REMOTE=1 serves the app to "another device" too, as laptop.test, for the pairing tests.
 const remote = Boolean(process.env.KLIPP_E2E_REMOTE);
 
+const here = (file: string) => fileURLToPath(new URL(file, import.meta.url));
+
 export default defineConfig({
   base: process.env.EXAMPLE_BASE ?? '/',
+  // Two pages: the app, and maps, 3D and web components. MapLibre and three.js make the second big.
+  build: {
+    rolldownOptions: { input: [here('index.html'), here('canvas.html')] },
+    chunkSizeWarningLimit: 2500,
+  },
   ...(remote ? { server: { allowedHosts: ['laptop.test'] } } : {}),
   plugins: [
     react(),

@@ -4,7 +4,7 @@ import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 
 export interface ChatHandlers {
-  /** False when Klipp is still answering; the text then stays in the input. */
+  /** False when the text wasn't taken; it then stays in the input. */
   send(text: string): boolean;
   point(): void;
   detach(): void;

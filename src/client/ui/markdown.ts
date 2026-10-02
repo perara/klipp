@@ -1,15 +1,17 @@
 import { h } from './dom.js';
 
-/** `code`, **bold**, *emphasis* and [links](…); anything else stays text. */
-const INLINE = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\(([^)\s]+)\)|\*([^*\s][^*\n]*)\*/g;
+/** `\`-escaped punctuation, `code`, **bold**, *emphasis* and [links](…); anything else stays text. */
+const INLINE =
+  /\\([!-/:-@[-`{-~])|`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\(([^)\s]+)\)|\*([^*\s][^*\n]*)\*/g;
 
 function inline(text: string): Array<Node | string> {
   const out: Array<Node | string> = [];
   let last = 0;
   for (const match of text.matchAll(INLINE)) {
     out.push(text.slice(last, match.index));
-    const [, code, bold, label, href, em] = match;
-    if (code !== undefined) out.push(h('code', {}, code));
+    const [, escaped, code, bold, label, href, em] = match;
+    if (escaped !== undefined) out.push(escaped);
+    else if (code !== undefined) out.push(h('code', {}, code));
     else if (bold !== undefined) out.push(h('strong', {}, ...inline(bold)));
     else if (label !== undefined && /^https?:\/\//.test(href!)) {
       out.push(h('a', { href: href!, target: '_blank', rel: 'noreferrer' }, label));
