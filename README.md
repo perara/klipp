@@ -70,7 +70,7 @@ Linux (on Windows, run the dev server in WSL). Element IDs tell instances apart 
 other JSX frameworks get the code location, without the call-site detail.
 
 ```bash
-npm install -D https://github.com/perara/klipp/releases/download/v0.4.0/klipp-0.4.0.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.5.0/klipp-0.5.0.tgz
 ```
 
 ```ts
