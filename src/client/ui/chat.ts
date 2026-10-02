@@ -1,4 +1,5 @@
-import type { AgentId, AgentInfo, IssueDraft } from '../../shared/protocol.js';
+import type { AgentId, AgentInfo } from '../../shared/protocol.js';
+import { ticketBody, TYPE_NAMES, type Ticket } from '../../shared/ticket.js';
 import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 
@@ -33,8 +34,8 @@ export class Reply {
 
 export type IssueDecision = 'file' | 'decline' | 'superseded';
 
-/** A draft issue in the chat, waiting for the user's decision. */
-export class IssueCard {
+/** A ticket in the chat, waiting for the user's decision. */
+export class TicketCard {
   readonly decision: Promise<IssueDecision>;
   private decide!: (decision: IssueDecision) => void;
   private readonly actions: HTMLElement;
@@ -42,7 +43,7 @@ export class IssueCard {
 
   constructor(
     readonly element: HTMLElement,
-    draft: IssueDraft,
+    ticket: Ticket,
   ) {
     this.decision = new Promise((resolve) => (this.decide = resolve));
     this.actions = h(
@@ -51,7 +52,7 @@ export class IssueCard {
       h(
         'button',
         { class: 'btn primary', type: 'button', onclick: () => this.decide('file') },
-        'File issue',
+        'File ticket',
       ),
       h(
         'button',
@@ -59,14 +60,21 @@ export class IssueCard {
         'Not now',
       ),
     );
+    element.classList.add(`type-${ticket.type}`);
     element.append(
-      h('div', { class: 'card-label' }, 'Issue draft'),
-      h('div', { class: 'card-title' }, draft.title),
+      h(
+        'div',
+        { class: 'card-tags' },
+        h('span', { class: 'badge' }, TYPE_NAMES[ticket.type]),
+        ticket.severity && h('span', { class: 'tag' }, ticket.severity),
+      ),
+      h('div', { class: 'card-title' }, ticket.title),
+      h('div', { class: 'card-summary' }, ticket.summary),
       h(
         'details',
         {},
-        h('summary', {}, 'Show the text'),
-        h('div', { class: 'card-body' }, renderMarkdown(draft.body)),
+        h('summary', {}, 'Show the ticket'),
+        h('div', { class: 'card-body' }, renderMarkdown(ticketBody(ticket))),
       ),
       this.actions,
       this.status,
@@ -236,8 +244,11 @@ export class ChatView {
     this.add(h('div', { class: 'activity' }, label));
   }
 
-  issue(draft: IssueDraft): IssueCard {
-    return new IssueCard(this.add(h('div', { class: 'msg klipp card' })), draft);
+  ticket(ticket: Ticket): TicketCard {
+    // Built before it is added, so the whole card scrolls into view.
+    const card = new TicketCard(h('div', { class: 'msg klipp card' }), ticket);
+    this.add(card.element);
+    return card;
   }
 
   /** Shows which element the next message is about, or nothing. */

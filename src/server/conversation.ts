@@ -8,6 +8,7 @@ import type {
   ClientToolResult,
   PageContext,
 } from '../shared/protocol.js';
+import { ticketProblems } from '../shared/ticket.js';
 import type { Agent } from './agents.js';
 import type { McpBridge, McpResult } from './mcp.js';
 import { SYSTEM_PROMPT } from './prompt.js';
@@ -77,8 +78,12 @@ function checkToolInput(name: string, input: Record<string, unknown>): string | 
     typeof input[key] === 'string' && (input[key] as string).trim() !== '';
   if (name === 'point_at_element' && !text('prompt')) return 'prompt must be a non-empty string.';
   if (name === 'inspect_element' && !text('id')) return 'id must be a non-empty string.';
-  if (name === 'propose_issue' && !(text('title') && text('body')))
-    return 'title and body must be non-empty strings.';
+  if (name === 'propose_ticket') {
+    const problems = ticketProblems(input);
+    if (problems.length) {
+      return `Not shown to the user yet: ${problems.join('; ')}. Ask the user for what is missing, one question at a time, then call propose_ticket again.`;
+    }
+  }
   return undefined;
 }
 

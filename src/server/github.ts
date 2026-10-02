@@ -31,6 +31,7 @@ export async function fileGitHubIssue(
   repo: string,
   draft: IssueDraft,
   token: string,
+  labels: string[] = [],
 ): Promise<string> {
   const response = await fetch(issuesEndpoint(repo), {
     method: 'POST',
@@ -41,7 +42,11 @@ export async function fileGitHubIssue(
       'User-Agent': 'klipp',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ title: draft.title, body: draft.body }),
+    body: JSON.stringify({
+      title: draft.title,
+      body: draft.body,
+      ...(labels.length ? { labels } : {}),
+    }),
   });
   const result = (await response.json().catch(() => ({}))) as {
     html_url?: string;

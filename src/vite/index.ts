@@ -5,11 +5,20 @@ import { loadEnv, normalizePath, type Plugin, type ResolvedConfig } from 'vite';
 import { createKlippMiddleware } from '../server/handler.js';
 import type { KlippManifest, ManifestEntry } from '../shared/manifest.js';
 import type { AgentId, IssueDraft } from '../shared/protocol.js';
+import type { TicketType } from '../shared/ticket.js';
 import type { Corner, RuntimeConfig } from '../shared/runtime-config.js';
 import { dirtyFiles, readGit, type GitInfo } from './git.js';
 import { stamp } from './stamp.js';
 
-export type { KlippManifest, ManifestEntry, RuntimeConfig, Corner, AgentId, IssueDraft };
+export type {
+  KlippManifest,
+  ManifestEntry,
+  RuntimeConfig,
+  Corner,
+  AgentId,
+  IssueDraft,
+  TicketType,
+};
 
 export interface ChatOptions {
   /** Which agent to start with when both are installed. Default: `claude`. */
@@ -20,8 +29,10 @@ export interface ChatOptions {
   allowRemote?: boolean;
   /** Replace an agent's command and leading arguments, as the tests do. */
   commands?: Partial<Record<AgentId, string[]>>;
+  /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
+  labels?: Partial<Record<TicketType, string[]>>;
   /** Replaces filing on GitHub, as the tests do. Returns the issue's address. */
-  fileIssue?: (draft: IssueDraft) => Promise<string>;
+  fileIssue?: (draft: IssueDraft, labels: string[]) => Promise<string>;
 }
 
 export interface KlippOptions {

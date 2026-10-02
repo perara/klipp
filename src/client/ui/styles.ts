@@ -215,7 +215,14 @@ a { color: var(--accent); }
   border-radius: 12px;
   background: var(--bg);
 }
-.card-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.card-tags { display: flex; gap: 6px; align-items: center; }
+.badge { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: var(--muted); }
+.type-bug .badge { background: #cf222e; }
+.type-feature .badge { background: #0969da; }
+.type-suggestion .badge { background: #8250df; }
+.type-question .badge { background: #1a7f37; }
+.tag { padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted); }
+.card-summary { margin-bottom: 6px; }
 .card-title { font-weight: 600; margin: 2px 0 4px; }
 .card details { margin-bottom: 8px; font-size: 13px; }
 .card summary { cursor: pointer; color: var(--muted); }

@@ -1,25 +1,48 @@
 # Klipp
 
-A paperclip that lives in the corner of your web app while you build and test it. Click it,
-tell it what looks wrong, and point at the thing you mean. Klipp reads the code that rendered
-it, explains what's going on, and files a GitHub issue when you say so.
+A paperclip that lives in the corner of your web app while you build and test it, and turns
+what testers notice into **tickets the team can act on**. Tell it what's wrong or what you'd
+like, point at the thing you mean, and Klipp works out whether it's a bug, a feature request, a
+suggestion or a question. It asks for whatever that kind of ticket still needs, finds where it
+lives in the code, and files it on GitHub when you say so.
 
 Its brain is a coding agent you already have: **Claude Code** or **Codex**, run in the
 background by the dev server with your own login. No API keys.
 
 ```
-you    the save button does nothing
-klipp  Click the button you mean.            (you click it)
-       📎 Reading src/features/editor/Toolbar.tsx
-klipp  It's disabled: `canSave` is false until the form is dirty
-       (Toolbar.tsx:42), and the form never marks itself dirty after a
-       paste (useForm.ts:88). Want me to file an issue?
+you    The Save button doesn't work.
+klipp  Point at the Save button that doesn't work.      (you click it)
+       📎 Running nl -ba src/App.tsx
+klipp  Save is disabled at src/App.tsx:50, and something covers it at line 53.
+       What should happen when you press Save?
+you    My changes should be saved. It's major: I can't save my work.
+klipp  ┌ Bug · major ─────────────────────────────────────┐
+       │ Save button does nothing                          │
+       │ What happens · What should happen · Steps ·       │
+       │ How often · In the code (App.tsx:50, :53)         │
+       │ [File ticket]  [Not now]                          │
+       └───────────────────────────────────────────────────┘
 ```
+
+## Tickets
+
+| Type            | When                                          | Klipp collects                                        | Labels                 |
+| --------------- | --------------------------------------------- | ----------------------------------------------------- | ---------------------- |
+| Bug             | Something doesn't work as intended            | what happens, what should, steps, how often, severity | `bug`, `klipp`         |
+| Feature request | Something the app can't do yet that is needed | the need, what would help, who it helps, today's way  | `enhancement`, `klipp` |
+| Suggestion      | Something works but could be better           | what's there now, the change, why it's better         | `suggestion`, `klipp`  |
+| Question        | How something is meant to work                | the question, and the answer from the code if found   | `question`, `klipp`    |
+
+A ticket is checked against its type before you see it: if a bug has no steps or severity, or a
+feature request has no need behind it, the agent is told what's missing and asks you, one
+question at a time. Every ticket gets the element, code, page, build and browser details
+appended, so nobody has to ask "where?" or "which version?". Change the labels with
+`chat.labels`.
 
 ## Quick start
 
 ```bash
-npm install -D https://github.com/perara/klipp/releases/download/v0.3.1/klipp-0.3.1.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.4.0/klipp-0.4.0.tgz
 ```
 
 ```ts
@@ -80,7 +103,7 @@ finds it.
 | Option                    | Default                           | What it does                                                    |
 | ------------------------- | --------------------------------- | --------------------------------------------------------------- |
 | `enabled`                 | dev only                          | Force Klipp on or off.                                          |
-| `chat`                    | `{}`                              | `{ agent, model, allowRemote }`, or `false` for no chat.        |
+| `chat`                    | `{}`                              | `{ agent, model, labels, allowRemote }`, or `false` for none.   |
 | `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for hotkey only.           |
 | `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there. |
 | `hotkey`                  | `alt+shift+k`                     | Opens and closes the chat.                                      |

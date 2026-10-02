@@ -120,13 +120,45 @@ if (q.includes('what did i say')) {
 } else if (q.includes('who are you')) {
   say(codex ? 'I am Codex, in a paperclip.' : 'I am Claude, in a paperclip.');
 } else if (q.includes('report')) {
-  const result = await callTool('propose_issue', {
+  const result = await callTool('propose_ticket', {
+    type: 'bug',
     title: 'Count does nothing',
-    body: 'The **Count** button does not count.',
+    summary: 'The Count button does not count.',
+    actual: 'Nothing happens when Count is clicked.',
+    expected: 'The count goes up by one.',
+    steps: ['Open the page', 'Click Count'],
+    frequency: 'Every time',
+    severity: 'major',
+    code_findings: 'examples/react-app/src/Button.tsx:5 renders the button.',
   });
   if (result.startsWith('Filed')) say('Filed! 📎');
   else if (result.startsWith('The user decided')) say("OK, I won't file it.");
   else say(`Noted: ${result}`);
+} else if (q.includes('idea')) {
+  // A feature request is only complete with the need behind it.
+  const need = q.includes('because')
+    ? question.slice(question.toLowerCase().indexOf('because'))
+    : undefined;
+  const result = await callTool('propose_ticket', {
+    type: 'feature',
+    title: 'Dark mode toggle',
+    summary: 'A switch for dark mode.',
+    proposal: 'A toggle in the header that switches to dark mode.',
+    ...(need ? { need } : {}),
+  });
+  if (result.startsWith('Not shown'))
+    say(`What do you need it for? (${result.split(':')[1]?.split('.')[0]?.trim()})`);
+  else say(result.startsWith('Filed') ? 'Filed! 📎' : `Noted: ${result}`);
+} else if (q.includes('suggest')) {
+  const result = await callTool('propose_ticket', {
+    type: 'suggestion',
+    title: 'Name the Reverse button for what it does',
+    summary: 'Reverse is unclear.',
+    current: 'The button says Reverse.',
+    proposal: 'Call it Reverse units.',
+    benefit: 'People know what it reverses.',
+  });
+  say(result.startsWith('Filed') ? 'Filed! 📎' : `Noted: ${result}`);
 } else if (page.element && q.includes('describe')) {
   const { tag, states, beneath } = page.element;
   say(

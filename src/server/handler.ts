@@ -14,6 +14,7 @@ import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
 import { McpBridge } from './mcp.js';
 import { PAGE_TOOLS } from './prompt.js';
+import { DEFAULT_LABELS, TICKET_TYPES, type TicketType } from '../shared/ticket.js';
 
 export interface KlippServerOptions {
   /** The repository root the agent works in, read-only. */
@@ -30,8 +31,10 @@ export interface KlippServerOptions {
   commands?: Partial<Record<AgentId, string[]>>;
   /** Environment for the GitHub token lookup. */
   env?: Record<string, string | undefined>;
+  /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
+  labels?: Partial<Record<TicketType, string[]>>;
   /** Replaces filing on GitHub, as tests do. Returns the issue's address. */
-  fileIssue?: (draft: IssueDraft) => Promise<string>;
+  fileIssue?: (draft: IssueDraft, labels: string[]) => Promise<string>;
   /** Answer requests from other machines too. Default: loopback only, since the agent runs as you. */
   allowRemote?: boolean;
   version?: string;
@@ -94,13 +97,17 @@ export function createKlippMiddleware(options: KlippServerOptions) {
 
   const fileIssue =
     options.fileIssue ??
-    (async (draft: IssueDraft) => {
+    (async (draft: IssueDraft, labels: string[]) => {
       if (!options.repo) throw new Error('No GitHub repository is known for this app.');
       const token = githubToken(options.env ?? process.env);
       if (!token)
         throw new Error('No GitHub token: log in with `gh auth login` or set GITHUB_TOKEN.');
-      return fileGitHubIssue(options.repo, draft, token);
+      return fileGitHubIssue(options.repo, draft, token, labels);
     });
+  const labelsFor = (type: unknown): string[] =>
+    TICKET_TYPES.includes(type as TicketType)
+      ? (options.labels?.[type as TicketType] ?? DEFAULT_LABELS[type as TicketType])
+      : [];
 
   async function chat(req: IncomingMessage, res: ServerResponse) {
     const request = (await readJson(req)) as ChatRequest;
@@ -167,7 +174,14 @@ export function createKlippMiddleware(options: KlippServerOptions) {
       } satisfies IssueResponse);
     }
     try {
-      json(res, 200, { url: await fileIssue(draft) } satisfies IssueResponse);
+      const issue = {
+        title: draft.title,
+        body: draft.body,
+        ...(draft.type ? { type: draft.type } : {}),
+      };
+      json(res, 200, {
+        url: await fileIssue(issue, labelsFor(draft.type)),
+      } satisfies IssueResponse);
     } catch (error) {
       json(res, 502, {
         error: error instanceof Error ? error.message : String(error),

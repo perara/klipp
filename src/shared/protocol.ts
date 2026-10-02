@@ -1,3 +1,5 @@
+import type { TicketType } from './ticket.js';
+
 /** The coding agents Klipp can run in the background, with your own login. */
 export type AgentId = 'claude' | 'codex';
 
@@ -58,7 +60,7 @@ export interface PageContext {
 }
 
 /** Tools the agent calls that need the page or the user; the browser answers them. */
-export const CLIENT_TOOLS = ['point_at_element', 'inspect_element', 'propose_issue'] as const;
+export const CLIENT_TOOLS = ['point_at_element', 'inspect_element', 'propose_ticket'] as const;
 export type ClientToolName = (typeof CLIENT_TOOLS)[number];
 
 export interface ClientToolCall {
@@ -98,6 +100,8 @@ export type ChatEvent =
 export interface IssueDraft {
   title: string;
   body: string;
+  /** Sets the issue's labels. */
+  type?: TicketType;
 }
 
 export type IssueResponse = { url: string } | { error: string };

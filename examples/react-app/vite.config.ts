@@ -10,8 +10,9 @@ const fakeAgent = [
   fileURLToPath(new URL('../../test/fake-agent.mjs', import.meta.url)),
 ];
 let filed = 0;
-const fakeFileIssue = async (_draft: IssueDraft) =>
-  `https://github.com/example/app/issues/${++filed}`;
+// The address carries the labels it would have set, for the tests to see.
+const fakeFileIssue = async (_draft: IssueDraft, labels: string[]) =>
+  `https://github.com/example/app/issues/${++filed}#labels=${labels.join(',')}`;
 
 export default defineConfig({
   base: process.env.EXAMPLE_BASE ?? '/',

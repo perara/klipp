@@ -13,7 +13,9 @@ import { elementContext, pageContext, type Probe } from '../context.js';
 import { anchorOf, identify, resolve } from '../identify.js';
 import { loadManifest } from '../manifest.js';
 import { elementFacts, issueFooter } from '../report.js';
-import { ChatView, type IssueCard, type Reply } from './chat.js';
+import { ChatView, type Reply, type TicketCard } from './chat.js';
+import type { Ticket } from '../../shared/ticket.js';
+import { ticketBody } from '../../shared/ticket.js';
 import { adoptStyles, h } from './dom.js';
 import { Figure } from './figure.js';
 import { Overlay } from './overlay.js';
@@ -38,7 +40,8 @@ export interface Picked {
 
 type Mode = 'closed' | 'open' | 'picking';
 
-const GREETING = "Hi, I'm Klipp! Tell me what looks wrong, or tap 📍 and point at it.";
+const GREETING =
+  "Hi, I'm Klipp! Found a bug, or have an idea? Tell me, and tap 📍 to point at what you mean. I'll ask a few questions and write it up as a ticket.";
 const UNREACHABLE =
   "I can't reach my brain from here. The chat runs in the dev server (or `vite preview`).";
 
@@ -134,7 +137,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
   let subject: Picked | undefined;
   /** Whether the next message carries the subject. */
   let attached = false;
-  let pendingCard: IssueCard | undefined;
+  let pendingCard: TicketCard | undefined;
   /** What the user typed instead of answering the pending card. */
   let typedInstead = '';
   let agent: AgentId = 'claude';
@@ -296,8 +299,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
         content: JSON.stringify(await contextOf({ element, point: centerOf(element) })),
       };
     }
-    const draft = { title: String(input.title), body: String(input.body) };
-    const card = (pendingCard = chat.issue(draft));
+    // The server checked the ticket against its type before handing it over.
+    const ticket = input as unknown as Ticket;
+    const card = (pendingCard = chat.ticket(ticket));
     figure.mood = 'idle';
     const decision = await card.decision;
     pendingCard = undefined;
@@ -310,9 +314,11 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
     card.filing();
     try {
+      const body = `${ticketBody(ticket)}\n\n${footer()}`;
       const url = await fileIssue(config.endpoint, {
-        ...draft,
-        body: `${draft.body}\n\n${footer()}`,
+        title: ticket.title,
+        body,
+        type: ticket.type,
       });
       card.filed(url);
       return { id, content: `Filed: ${url}` };

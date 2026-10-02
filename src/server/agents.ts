@@ -37,7 +37,7 @@ export interface Agent {
   parser(root: string): (line: string) => AgentEvent[];
 }
 
-const PAGE_TOOL_NAMES = ['point_at_element', 'inspect_element', 'propose_issue'];
+const PAGE_TOOL_NAMES = ['point_at_element', 'inspect_element', 'propose_ticket'];
 
 /** Files no agent run reads, even when git tracks them. */
 const SECRET_FILES = [

@@ -18,8 +18,9 @@ beforeAll(async () => {
     root: process.cwd(),
     manifest: () => ({ version: 1, entries: {} }),
     commands: { claude: fakeAgent, codex: ['no-such-codex-binary'] },
-    fileIssue: async (draft) => {
-      filed.push(draft);
+    labels: { bug: ['defect'] },
+    fileIssue: async (draft, labels) => {
+      filed.push({ ...draft, labels });
       return 'https://github.com/acme/app/issues/1';
     },
   });
@@ -111,17 +112,24 @@ describe('createKlippMiddleware', () => {
     expect(second.conversation).toBe(first.conversation);
   });
 
-  it("hands a page-tool call to the browser and gives the agent the browser's answer", async () => {
+  it("hands a ticket to the browser and gives the agent the browser's answer", async () => {
     const { events } = await chat(
       { agent: 'claude', text: 'report it', page },
       () => 'The user decided not to file it.',
     );
     const call = events.find((e) => e.type === 'client_tool');
     expect(call).toMatchObject({
-      call: { name: 'propose_issue', input: { title: 'Count does nothing' } },
+      call: { name: 'propose_ticket', input: { type: 'bug', title: 'Count does nothing' } },
     });
     const text = events.flatMap((e) => (e.type === 'text' ? [e.delta] : [])).join('');
     expect(text).toBe("OK, I won't file it.");
+  });
+
+  it('sends an incomplete ticket back to the agent without showing it', async () => {
+    const { events } = await chat({ agent: 'claude', text: 'an idea: dark mode', page });
+    expect(events.some((e) => e.type === 'client_tool')).toBe(false);
+    const text = events.flatMap((e) => (e.type === 'text' ? [e.delta] : [])).join('');
+    expect(text).toBe('What do you need it for? (missing for a feature request)');
   });
 
   it('reports an agent that is not installed, or that fails', async () => {
@@ -138,9 +146,17 @@ describe('createKlippMiddleware', () => {
   });
 
   it('files issues', async () => {
-    const response = await post('/sub/@klipp/issue', { title: 'Broken', body: 'It is.' });
+    const response = await post('/sub/@klipp/issue', {
+      title: 'Broken',
+      body: 'It is.',
+      type: 'bug',
+    });
     expect(await response.json()).toEqual({ url: 'https://github.com/acme/app/issues/1' });
-    expect(filed).toEqual([{ title: 'Broken', body: 'It is.' }]);
+    await post('/@klipp/issue', { title: 'Idea', body: 'Yes.', type: 'feature' });
+    expect(filed).toEqual([
+      { title: 'Broken', body: 'It is.', type: 'bug', labels: ['defect'] },
+      { title: 'Idea', body: 'Yes.', type: 'feature', labels: ['enhancement', 'klipp'] },
+    ]);
   });
 
   it('refuses requests without its header or from another site', async () => {
@@ -161,7 +177,7 @@ describe('createKlippMiddleware', () => {
       ).status,
     ).toBe(403);
     expect((await fetch(`${base}/@klipp/agents`)).status).toBe(403);
-    expect(filed).toHaveLength(1);
+    expect(filed).toHaveLength(2);
   });
 
   it('serves the manifest and leaves every other path alone', async () => {

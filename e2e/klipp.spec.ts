@@ -86,22 +86,51 @@ test('the model is told why a covered, disabled button cannot be pressed', async
   );
 });
 
-test('issues are filed only when you say so', async ({ page }) => {
+test('a bug becomes a ticket that is filed only when you say so, labelled as a bug', async ({
+  page,
+}) => {
   await openChat(page);
   await ask(page, 'please report this');
   const card = chat(page).locator('.card');
-  await expect(card).toContainText('Count does nothing');
+  await expect(card.locator('.badge')).toHaveText('Bug');
+  await expect(card.locator('.tag')).toHaveText('major');
+  await expect(card.locator('.card-title')).toHaveText('Count does nothing');
+  await card.getByText('Show the ticket').click();
+  await expect(card.locator('.card-body')).toContainText('Steps to reproduce');
   await card.getByRole('button', { name: 'Not now' }).click();
   await expect(replies(page).last()).toHaveText("OK, I won't file it.");
 
   await ask(page, 'report it after all');
   const second = chat(page).locator('.card').last();
-  await second.getByRole('button', { name: 'File issue' }).click();
+  await second.getByRole('button', { name: 'File ticket' }).click();
   await expect(second.getByRole('link')).toHaveAttribute(
     'href',
-    /^https:\/\/github\.com\/example\/app\/issues\/\d+$/,
+    /^https:\/\/github\.com\/example\/app\/issues\/\d+#labels=bug,klipp$/,
   );
   await expect(replies(page).last()).toHaveText('Filed! 📎');
+});
+
+test('a feature request needs the need behind it before it is shown', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'I have an idea: a dark mode toggle');
+  await expect(replies(page).last()).toHaveText(
+    'What do you need it for? (missing for a feature request)',
+  );
+  await expect(chat(page).locator('.card')).toHaveCount(0);
+  await ask(page, 'idea: dark mode, because the control room is dark at night');
+  const card = chat(page).locator('.card');
+  await expect(card.locator('.badge')).toHaveText('Feature request');
+  await card.getByRole('button', { name: 'File ticket' }).click();
+  await expect(card.getByRole('link')).toHaveAttribute('href', /#labels=enhancement,klipp$/);
+});
+
+test('a suggestion is labelled as one', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'I suggest renaming Reverse');
+  const card = chat(page).locator('.card');
+  await expect(card.locator('.badge')).toHaveText('Suggestion');
+  await card.getByRole('button', { name: 'File ticket' }).click();
+  await expect(card.getByRole('link')).toHaveAttribute('href', /#labels=suggestion,klipp$/);
 });
 
 test('an agent that fails says how to fix it, and the next message works', async ({ page }) => {
@@ -113,13 +142,16 @@ test('an agent that fails says how to fix it, and the next message works', async
   await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
 });
 
-test('the newest reply stays in view as the conversation grows', async ({ page }) => {
+test('the newest reply and ticket stay in view as the conversation grows', async ({ page }) => {
   await openChat(page);
   for (let i = 0; i < 8; i++) {
     await ask(page, `hello ${i}`);
     await expect(replies(page)).toHaveCount(i + 2);
   }
   await expect(replies(page).last()).toBeInViewport({ ratio: 1 });
+  await ask(page, 'please report this');
+  const fileTicket = chat(page).locator('.card').getByRole('button', { name: 'File ticket' });
+  await expect(fileTicket).toBeInViewport({ ratio: 1 });
 });
 
 test('the conversation carries on from one message to the next', async ({ page }) => {
@@ -163,7 +195,7 @@ test('you can switch between Claude and Codex', async ({ page }) => {
   );
 });
 
-test('typing instead of answering an issue draft answers it', async ({ page }) => {
+test('typing instead of deciding on a ticket answers it', async ({ page }) => {
   await openChat(page);
   await ask(page, 'report this');
   await expect(chat(page).locator('.card')).toContainText('Count does nothing');

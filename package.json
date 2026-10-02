@@ -1,7 +1,7 @@
 {
   "name": "klipp",
-  "version": "0.3.1",
-  "description": "A paperclip that lives in your web app while you build it: point at what looks wrong, and your own Claude Code or Codex reads the code behind it and files the GitHub issue.",
+  "version": "0.4.0",
+  "description": "A paperclip in your web app that turns what testers notice into actionable tickets: it classifies bugs, feature requests and suggestions, asks for what's missing, and files them on GitHub, using your own Claude Code or Codex.",
   "license": "MIT",
   "author": "Per-Arne Andersen",
   "type": "module",
