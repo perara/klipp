@@ -16,7 +16,7 @@ function inline(text: string): Array<Node | string> {
     } else if (label !== undefined) {
       // Agents link files by their local path; the page can't open those, so show the place.
       out.push(h('code', {}, label));
-    } else out.push(h('em', {}, em!));
+    } else out.push(h('em', {}, em));
     last = match.index + match[0].length;
   }
   out.push(text.slice(last));

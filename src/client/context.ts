@@ -7,9 +7,9 @@ import { elementFacts, redactedUrl } from './report.js';
 
 export interface Probe {
   /** The page element at a point, looking through Klipp's own UI. */
-  hitTest(x: number, y: number): Element | null;
+  hitTest: (x: number, y: number) => Element | null;
   /** Page elements under a point, topmost first, leaving out Klipp's own UI. */
-  elementsAt(x: number, y: number): Element[];
+  elementsAt: (x: number, y: number) => Element[];
 }
 
 export function elementRef(element: Element, manifest: KlippManifest | undefined): ElementRef {

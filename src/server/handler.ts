@@ -6,15 +6,18 @@ import type {
   ChatEvent,
   ChatRequest,
   IssueDraft,
+  IssueRequest,
   IssueResponse,
+  PairRequest,
   ToolResultRequest,
 } from '../shared/protocol.js';
+import { DEFAULT_LABELS, ticketBody, type TicketType } from '../shared/ticket.js';
 import { AGENTS, onPath } from './agents.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
+import { fromKlipp, isLocal, Pairing } from './guard.js';
 import { McpBridge } from './mcp.js';
 import { PAGE_TOOLS } from './prompt.js';
-import { DEFAULT_LABELS, TICKET_TYPES, type TicketType } from '../shared/ticket.js';
 
 export interface KlippServerOptions {
   /** The repository root the agent works in, read-only. */
@@ -22,27 +25,43 @@ export interface KlippServerOptions {
   /** Repository address for filing issues, such as `https://github.com/owner/repo`. */
   repo?: string;
   /** The manifest, served under development; a build serves its own file. */
-  manifest?: () => KlippManifest;
+  manifest?: () => KlippManifest | Promise<KlippManifest>;
   /** Which agent to start with when both are installed. Default: Claude. */
   agent?: AgentId;
   /** Passed to the agent's `--model`/`-m`. */
   model?: string;
   /** Replace an agent's command, as the tests do: the command and its leading arguments. */
   commands?: Partial<Record<AgentId, string[]>>;
+  /** More of the dev server's environment variables to pass to the agent, by name. */
+  passEnv?: string[];
   /** Environment for the GitHub token lookup. */
   env?: Record<string, string | undefined>;
   /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
   labels?: Partial<Record<TicketType, string[]>>;
   /** Replaces filing on GitHub, as tests do. Returns the issue's address. */
   fileIssue?: (draft: IssueDraft, labels: string[]) => Promise<string>;
-  /** Answer requests from other machines too. Default: loopback only, since the agent runs as you. */
+  /**
+   * Answer other devices and addresses too, once paired with the code from `pairing.code`.
+   * Default: only a browser on this machine at localhost, since the agent runs as you.
+   */
   allowRemote?: boolean;
+  /** The code other devices pair with when `allowRemote` is on. Default: a new random one per start. */
+  pairingCode?: string;
+  /** Agent runs at once, across every conversation. Default: 4. */
+  maxRuns?: number;
   version?: string;
 }
 
-type Next = (error?: unknown) => void;
+export interface KlippMiddleware {
+  (req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void): void;
+  /** Present when `allowRemote` is on: the code other devices pair with. */
+  readonly pairing: Pairing | undefined;
+  /** Stops every run and the MCP bridge, for when the dev server closes. */
+  close(): void;
+}
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+/** GitHub refuses issue bodies over 65,536 characters; the ticket needs room too. */
+const MAX_FOOTER = 16_000;
 
 function json(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
@@ -51,7 +70,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -59,101 +78,113 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     if (size > 1_000_000) throw new Error('too large');
     chunks.push(chunk as Buffer);
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Expected a JSON object.');
+  }
+  return value as Record<string, unknown>;
 }
 
-/**
- * Who may call: the same machine, with Klipp's header (a cross-site page can't add it without
- * a preflight the dev server refuses), and from the page's own origin.
- */
-function allowed(req: IncomingMessage, allowRemote: boolean): boolean {
-  if (!allowRemote && !LOOPBACK.has(req.socket.remoteAddress ?? '')) return false;
-  if (req.headers['x-klipp'] !== '1') return false;
-  const origin = req.headers.origin;
-  if (origin && new URL(origin).host !== req.headers.host) return false;
-  const site = req.headers['sec-fetch-site'];
-  return site === undefined || site === 'same-origin';
-}
+const WINDOWS =
+  "Klipp's chat runs the agents on macOS and Linux. On Windows, run the dev server in WSL.";
 
 /** Connect-style middleware: the chat, page-tool answers, issue filing, and (in development) the manifest. */
-export function createKlippMiddleware(options: KlippServerOptions) {
+export function createKlippMiddleware(options: KlippServerOptions): KlippMiddleware {
   const bridge = new McpBridge(PAGE_TOOLS, options.version);
   const conversations = new Conversations();
+  const runs = new Set<AbortController>();
+  const pairing = options.allowRemote ? new Pairing(options.pairingCode) : undefined;
+  const maxRuns = options.maxRuns ?? 4;
   const command = (agent: AgentId) => options.commands?.[agent] ?? [AGENTS[agent].binary];
+  const windows = process.platform === 'win32' && !options.commands;
 
   function agents(): AgentsResponse {
     const list = (Object.keys(AGENTS) as AgentId[]).map((id) => ({
       id,
       label: AGENTS[id].label,
-      available: onPath(command(id)[0]!),
+      available: !windows && onPath(command(id)[0]!),
     }));
     const wanted = options.agent ?? 'claude';
     const preferred =
       list.find((a) => a.id === wanted && a.available)?.id ??
       list.find((a) => a.available)?.id ??
       wanted;
-    return { agents: list, preferred };
+    return { agents: list, preferred, ...(windows ? { problem: WINDOWS } : {}) };
   }
 
   const fileIssue =
     options.fileIssue ??
     (async (draft: IssueDraft, labels: string[]) => {
       if (!options.repo) throw new Error('No GitHub repository is known for this app.');
-      const token = githubToken(options.env ?? process.env);
-      if (!token)
-        throw new Error('No GitHub token: log in with `gh auth login` or set GITHUB_TOKEN.');
+      const token = githubToken(options.repo, options.env ?? process.env);
       return fileGitHubIssue(options.repo, draft, token, labels);
     });
-  const labelsFor = (type: unknown): string[] =>
-    TICKET_TYPES.includes(type as TicketType)
-      ? (options.labels?.[type as TicketType] ?? DEFAULT_LABELS[type as TicketType])
-      : [];
+  const labelsFor = (type: TicketType): string[] => options.labels?.[type] ?? DEFAULT_LABELS[type];
 
   async function chat(req: IncomingMessage, res: ServerResponse) {
-    const request = (await readJson(req)) as ChatRequest;
-    if (!(request.agent in AGENTS) || typeof request.text !== 'string' || !request.page) {
+    const request = (await readJson(req)) as Partial<ChatRequest>;
+    const agent = request.agent;
+    if (
+      typeof agent !== 'string' ||
+      !Object.hasOwn(AGENTS, agent) ||
+      typeof request.text !== 'string' ||
+      typeof request.page !== 'object' ||
+      request.page === null
+    ) {
       return json(res, 400, { error: 'A chat message needs an agent, text and the page.' });
     }
-    const conversation = conversations.get(request.conversation, request.agent);
-    if (conversation.busy) return json(res, 409, { error: 'Klipp is still answering.' });
-    conversation.busy = true;
     await bridge.start();
-    res.statusCode = 200;
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Accel-Buffering', 'no');
+    const conversation = conversations.get(
+      typeof request.conversation === 'string' ? request.conversation : undefined,
+      agent,
+    );
+    if (conversation.busy) return json(res, 409, { error: 'Klipp is still answering.' });
+    if (conversations.running() >= maxRuns) {
+      return json(res, 429, { error: 'Klipp is answering too many conversations at once.' });
+    }
+    conversation.busy = true;
     const aborted = new AbortController();
+    runs.add(aborted);
     res.on('close', () => aborted.abort());
-    const emit = (event: ChatEvent) => {
-      if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
-    emit({ type: 'conversation', id: conversation.id });
     try {
-      if (!onPath(command(request.agent)[0]!)) {
-        const name = AGENTS[request.agent].binary;
-        emit({
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Accel-Buffering', 'no');
+      const emit = (event: ChatEvent) => {
+        if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      emit({ type: 'conversation', id: conversation.id });
+      if (windows) return emit({ type: 'error', message: WINDOWS });
+      if (!onPath(command(agent)[0]!)) {
+        const name = AGENTS[agent].binary;
+        return emit({
           type: 'error',
           message: `I can't find \`${name}\` on this machine. Install it and log in, then restart the dev server.`,
         });
-        return;
       }
       await runTurn(conversation, request.text, request.page, {
-        agent: AGENTS[request.agent],
-        command: command(request.agent),
+        agent: AGENTS[agent],
+        command: command(agent),
         root: options.root,
         bridge,
         ...(options.model ? { model: options.model } : {}),
+        ...(options.passEnv ? { passEnv: options.passEnv } : {}),
         emit,
         signal: aborted.signal,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
     } finally {
+      runs.delete(aborted);
       conversation.busy = false;
       res.end();
     }
   }
 
   async function toolResult(req: IncomingMessage, res: ServerResponse) {
-    const result = (await readJson(req)) as ToolResultRequest;
+    const result = (await readJson(req)) as Partial<ToolResultRequest>;
     const conversation = conversations.find(String(result.conversation));
     const delivered =
       conversation !== undefined &&
@@ -161,60 +192,109 @@ export function createKlippMiddleware(options: KlippServerOptions) {
       answerTool(conversation, {
         id: String(result.id),
         content: result.content,
-        ...(result.isError ? { isError: true } : {}),
+        ...(result.isError === true ? { isError: true } : {}),
       });
     json(res, delivered ? 200 : 404, { delivered });
   }
 
+  /** Files a ticket the agent proposed and the user is looking at, once. */
   async function issue(req: IncomingMessage, res: ServerResponse) {
-    const draft = (await readJson(req)) as IssueDraft;
-    if (typeof draft.title !== 'string' || typeof draft.body !== 'string' || !draft.title.trim()) {
-      return json(res, 400, {
-        error: 'An issue needs a title and a body.',
+    const request = (await readJson(req)) as Partial<IssueRequest>;
+    const conversation = conversations.find(String(request.conversation));
+    const proposal = String(request.proposal);
+    const ticket = conversation?.proposals.get(proposal);
+    if (!conversation || !ticket) {
+      return json(res, 404, {
+        error: 'That ticket is no longer waiting to be filed.',
       } satisfies IssueResponse);
     }
+    if (typeof request.footer !== 'string' || request.footer.length > MAX_FOOTER) {
+      return json(res, 400, { error: 'The page details are missing or too long.' });
+    }
+    conversation.proposals.delete(proposal);
     try {
-      const issue = {
-        title: draft.title,
-        body: draft.body,
-        ...(draft.type ? { type: draft.type } : {}),
-      };
+      const body = `${ticketBody(ticket)}\n\n${request.footer}`;
+      const draft = { title: ticket.title, body, type: ticket.type };
       json(res, 200, {
-        url: await fileIssue(issue, labelsFor(draft.type)),
+        url: await fileIssue(draft, labelsFor(ticket.type)),
       } satisfies IssueResponse);
     } catch (error) {
+      // Still there to file once whatever went wrong is fixed.
+      if (conversation.pending.has(proposal)) conversation.proposals.set(proposal, ticket);
       json(res, 502, {
         error: error instanceof Error ? error.message : String(error),
       } satisfies IssueResponse);
     }
   }
 
+  async function pair(req: IncomingMessage, res: ServerResponse) {
+    const request = (await readJson(req)) as Partial<PairRequest>;
+    const cookie = pairing?.pair(request.code, req);
+    if (!cookie) {
+      const error = pairing?.locked
+        ? 'Too many wrong codes. Restart the dev server to pair again.'
+        : 'That is not the code the dev server printed.';
+      return json(res, 403, { error });
+    }
+    res.setHeader('Set-Cookie', cookie);
+    json(res, 200, { paired: true });
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
+    agents: (_req, res) => Promise.resolve(json(res, 200, agents())),
     chat,
     'tool-result': toolResult,
     issue,
   };
 
-  return (req: IncomingMessage, res: ServerResponse, next: Next) => {
+  /** Why a request may not use the chat, or undefined when it may. */
+  function refusal(req: IncomingMessage): [number, string] | undefined {
+    if (!fromKlipp(req)) return [403, 'Not allowed.'];
+    if (isLocal(req) || pairing?.paired(req)) return undefined;
+    if (!pairing) {
+      return [
+        403,
+        "Klipp's chat answers a browser on this machine at localhost. For other devices or addresses, turn on chat.allowRemote.",
+      ];
+    }
+    return [
+      401,
+      "Pair this device first: open the link Klipp printed in the dev server's terminal.",
+    ];
+  }
+
+  const middleware = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    next: (error?: unknown) => void,
+  ) => {
     const path = (req.url ?? '').split('?', 1)[0]!;
-    const match = /\/@klipp\/([\w.-]+)$/.exec(path);
-    if (!match) return next();
-    const name = match[1]!;
+    const name = /\/@klipp\/([\w.-]+)$/.exec(path)?.[1];
+    if (!name) return next();
     if (req.method === 'GET' && name === 'manifest.json' && options.manifest) {
-      return json(res, 200, options.manifest());
+      Promise.resolve(options.manifest()).then(
+        (manifest) => json(res, 200, manifest),
+        (error: unknown) => next(error),
+      );
+      return;
     }
-    if (req.method === 'GET' && name === 'agents') {
-      if (!allowed(req, options.allowRemote ?? false))
-        return json(res, 403, { error: 'Not allowed.' });
-      return json(res, 200, agents());
-    }
-    const route = routes[name];
-    if (!route || req.method !== 'POST') return next();
-    if (!allowed(req, options.allowRemote ?? false))
-      return json(res, 403, { error: 'Not allowed.' });
+    const route = name === 'pair' && pairing ? pair : routes[name];
+    const method = name === 'agents' ? 'GET' : 'POST';
+    if (!route || req.method !== method) return next();
+    const refused =
+      name === 'pair' ? (fromKlipp(req) ? undefined : [403, 'Not allowed.']) : refusal(req);
+    if (refused) return json(res, refused[0] as number, { error: refused[1] });
     route(req, res).catch((error: unknown) => {
       if (res.headersSent) res.end();
       else json(res, 400, { error: error instanceof Error ? error.message : String(error) });
     });
   };
+
+  return Object.assign(middleware, {
+    pairing,
+    close() {
+      for (const run of runs) run.abort();
+      bridge.close();
+    },
+  });
 }

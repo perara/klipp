@@ -1,13 +1,18 @@
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { claude, codex, onPath, type RunSpec } from './agents.js';
+import { childEnv, claude, codex, codexInstall, onPath, type RunSpec } from './agents.js';
 
 const spec: RunSpec = {
   root: '/repo',
+  dir: '/tmp/klipp-run-1',
   system: 'You are Klipp.',
   message: 'hi',
   newSession: '11111111-1111-1111-1111-111111111111',
   mcpUrl: 'http://127.0.0.1:4000/mcp/c1',
   mcpToken: 'secret',
+  install: ['/opt/codex'],
 };
 
 const lines = (parse: (line: string) => unknown[], events: object[]) =>
@@ -22,8 +27,10 @@ describe('claude', () => {
     expect(args[args.indexOf('--tools') + 1]).toBe('Read,Grep,Glob');
     expect(args).toContain('--strict-mcp-config');
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
-    expect(args.join(' ')).not.toMatch(/Bash|Edit|Write|bypassPermissions|dangerously/);
-    const mcp = JSON.parse(args[args.indexOf('--mcp-config') + 1]!) as {
+    expect(args.join(' ')).not.toMatch(/Bash|Edit|Write|bypassPermissions|dangerously|secret/);
+    // The token goes in a private file, out of the process list.
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe('/tmp/klipp-run-1/mcp.json');
+    const mcp = JSON.parse(claude.files!(spec)['mcp.json']!) as {
       mcpServers: Record<string, unknown>;
     };
     expect(Object.keys(mcp.mcpServers)).toEqual(['klipp']);
@@ -35,7 +42,9 @@ describe('claude', () => {
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]!) as {
       permissions: { deny: string[] };
     };
-    expect(settings.permissions.deny).toContain('Read(**/.env)');
+    expect(settings.permissions.deny).toEqual(
+      expect.arrayContaining(['Read(**/.env)', 'Read(**/.envrc)', 'Read(.git/config)']),
+    );
   });
 
   it('starts a session with a chosen id and resumes it after', () => {
@@ -88,6 +97,19 @@ describe('claude', () => {
     ]);
   });
 
+  it('skips lines that are not what it expects', () => {
+    expect(
+      lines(claude.parser('/repo'), [
+        { type: 'stream_event' },
+        { type: 'stream_event', event: null },
+        { type: 'assistant', message: { content: [null, 3, { type: 'tool_use' }] } },
+        { type: 'assistant', message: 'hi' },
+        { type: 'result', is_error: true, result: { nested: true } },
+      ]),
+    ).toEqual([{ type: 'error', message: 'Claude stopped with an error.' }]);
+    expect(claude.parser('/repo')('not json')).toEqual([]);
+  });
+
   it('points at the login when authentication fails', () => {
     const [event] = lines(claude.parser('/repo'), [
       { type: 'result', is_error: true, result: 'Failed to authenticate: OAuth session expired' },
@@ -103,6 +125,12 @@ describe('codex', () => {
     expect(args.slice(0, 3)).toEqual(['exec', '--json', '--skip-git-repo-check']);
     expect(args).toContain('--ignore-user-config');
     expect(args).toContain('sandbox_mode="read-only"');
+    // Reads only the repository, the system files programs need, and Codex itself.
+    expect(args).toContain('default_permissions="klipp"');
+    expect(args).toContain(
+      'permissions.klipp.filesystem={":minimal"="read", ":workspace_roots"="read", "/opt/codex"="read"}',
+    );
+    expect(args).toContain('shell_environment_policy.inherit="core"');
     expect(args).toContain('approval_policy="never"');
     expect(args).toContain('mcp_servers.klipp.default_tools_approval_mode="approve"');
     expect(args).toContain(`mcp_servers.klipp.url="${spec.mcpUrl}"`);
@@ -153,6 +181,64 @@ describe('codex', () => {
     expect(event!.message).toBe(
       '401 Unauthorized Run `codex login` in a terminal, then try again.',
     );
+  });
+});
+
+describe('childEnv', () => {
+  it("passes what the agent needs to start and log in, and nothing of the dev server's own", () => {
+    const env = {
+      PATH: '/bin',
+      HOME: '/home/me',
+      LC_ALL: 'C',
+      HTTPS_PROXY: 'http://proxy',
+      ANTHROPIC_API_KEY: 'a',
+      CLAUDE_CONFIG_DIR: 'c',
+      OPENAI_API_KEY: 'o',
+      CODEX_HOME: 'x',
+      DATABASE_URL: 'postgres://secret',
+      GITHUB_TOKEN: 'ghp',
+      MY_EXTRA: 'yes',
+    };
+    expect(Object.keys(childEnv(claude, env)).sort()).toEqual([
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CONFIG_DIR',
+      'HOME',
+      'HTTPS_PROXY',
+      'LC_ALL',
+      'PATH',
+    ]);
+    expect(Object.keys(childEnv(codex, env, ['MY_EXTRA'])).sort()).toEqual([
+      'CODEX_HOME',
+      'HOME',
+      'HTTPS_PROXY',
+      'LC_ALL',
+      'MY_EXTRA',
+      'OPENAI_API_KEY',
+      'PATH',
+    ]);
+  });
+});
+
+describe('codexInstall', () => {
+  it('finds the release a standalone install links to, and the packages of an npm install', () => {
+    const base = mkdtempSync(join(tmpdir(), 'klipp-install-'));
+    const release = join(base, 'releases', '1.0', 'bin');
+    mkdirSync(release, { recursive: true });
+    writeFileSync(join(release, 'codex'), '');
+    mkdirSync(join(base, 'bin'));
+    symlinkSync(join(release, 'codex'), join(base, 'bin', 'codex'));
+    expect(codexInstall('codex', { PATH: join(base, 'bin') })).toEqual([
+      join(base, 'releases', '1.0'),
+    ]);
+
+    const npm = join(base, 'lib', 'node_modules', '@openai', 'codex', 'bin');
+    mkdirSync(npm, { recursive: true });
+    writeFileSync(join(npm, 'codex.js'), '');
+    expect(codexInstall(join(npm, 'codex.js'), {})).toEqual([
+      join(base, 'lib', 'node_modules', '@openai', 'codex'),
+      join(base, 'lib', 'node_modules'),
+    ]);
+    expect(codexInstall('no-such-codex', { PATH: base })).toEqual([]);
   });
 });
 

@@ -65,6 +65,10 @@ by your dev server with your own login. There are no API keys and nothing to hos
 
 ## Quick start
 
+**Requirements:** Node.js 22+, Vite 5.4.12+ to 8, and for the chat, `claude` or `codex` on macOS or
+Linux (on Windows, run the dev server in WSL). Element IDs tell instances apart through React;
+other JSX frameworks get the code location, without the call-site detail.
+
 ```bash
 npm install -D https://github.com/perara/klipp/releases/download/v0.4.0/klipp-0.4.0.tgz
 ```
@@ -73,6 +77,7 @@ npm install -D https://github.com/perara/klipp/releases/download/v0.4.0/klipp-0.
 // vite.config.ts
 import react from '@vitejs/plugin-react';
 import klipp from 'klipp/vite';
+import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [react(), klipp()],
@@ -83,7 +88,10 @@ Then:
 
 1. Have [Claude Code](https://code.claude.com) (`claude`) or [Codex](https://github.com/openai/codex) (`codex`) installed and logged in on the same machine.
 2. Log in to the GitHub CLI (`gh auth login`), or set `GITHUB_TOKEN`, so Klipp can file tickets.
-3. Run your dev server and click the paperclip, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>.
+3. Run your dev server, open the app at `localhost`, and click the paperclip, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>.
+
+To let testers in from other devices, such as a phone on your network, set `chat.allowRemote`.
+The dev server then prints a pairing link; each device opens it once.
 
 Klipp runs **under the dev server and is off in builds**. Turn it on for a test build with
 `KLIPP=1 vite build` (the chat then works under `vite preview`), and off anywhere with `KLIPP=0`.
@@ -100,7 +108,7 @@ It's always off under Vitest.
 
 The dev server runs the agent once per message and resumes its session, so the conversation
 carries on. The agent reaches the page only through Klipp's three tools, served to it over MCP on
-a loopback port with a per-run token:
+a loopback port, behind a token that lives as long as the dev server:
 
 | Tool               | What it does                                                                             |
 | ------------------ | ---------------------------------------------------------------------------------------- |
@@ -119,8 +127,11 @@ a loopback port with a per-run token:
 
 Every ticket also gets the element's Klipp ID, a permalink to its code at the build's commit, the
 components it sits in, its state (disabled, hidden, covered), the page, the build and the
-browser, so nobody has to ask "where?" or "which version?". Change the labels with
-`chat.labels`.
+browser, so nobody has to ask "where?" or "which version?". The card shows all of it before
+anyone files. Change the labels with `chat.labels`.
+
+Klipp files on github.com, or on GitHub Enterprise when `gh` is logged in to that host
+(`gh auth login --hostname`). A token is only ever sent to the host it belongs to.
 
 ### Stable element IDs
 
@@ -141,11 +152,14 @@ the DevTools console, `klipp.id($0)` gives an element's ID and `klipp.find(id)` 
 
 ## Privacy and safety
 
-- **No page text.** The agent sees structure and state, never the text on the page or form values. Query values in addresses are blanked, except the ones you list in `keepQuery`.
-- **Read-only agents.** Claude runs `--restricted` with only Read, Grep and Glob: no shell, no web, and `.env` and key files are denied. Codex runs in its read-only sandbox. Neither loads your own settings or other MCP servers.
-- **Local only.** The page talks only to its own origin. The chat answers only same-machine, same-origin requests that carry Klipp's header (`chat.allowRemote` lets a phone on your LAN in).
-- **Nothing filed without a click,** and Klipp's own key and pointer events never reach your page's handlers.
+- **No page text.** The agent sees structure and state, never the text on the page or form values. Console errors are sent by name and message; objects logged with them are named, not opened. Query values in addresses are blanked, except the ones you list in `keepQuery`.
+- **Read-only agents, kept to your repository.** Claude runs `--restricted` with only Read, Grep and Glob: no shell, no web, and `.env`, key and credential files are denied. Codex runs in a sandbox that reads only the repository and the system files programs need, and writes nothing; its commands get only a core environment. Neither loads your own settings or other MCP servers, and neither gets the dev server's environment beyond what it needs to start and log in.
+- **Your browser only.** The chat answers a browser on this machine at `localhost`, from the page itself. Other names, tunnels and proxies are turned away, even from loopback, so a site that rebinds its name to `127.0.0.1` gets nothing. With `chat.allowRemote`, other devices pair once with the code the dev server prints.
+- **Nothing filed without a click.** The card shows the whole ticket first, and the server files only the ticket the agent proposed, once.
+- **Out of your page's way.** Klipp's key, pointer and focus events stop at its own root, so your page's handlers don't see them (only listeners on `window` or `document` in the capture phase, which see everything, still do).
 - **Strict-CSP friendly.** Klipp uses no `innerHTML`, no inline styles and no inline scripts.
+
+[SECURITY.md](SECURITY.md) has the details, and what Klipp does not protect against.
 
 ## Options
 
@@ -155,7 +169,10 @@ the DevTools console, `klipp.id($0)` gives an element's ID and `klipp.find(id)` 
 | `chat.agent`              | `claude`                          | Who answers first; the chat can switch to the other.                   |
 | `chat.model`              | the agent's default               | Passed to the agent.                                                   |
 | `chat.labels`             | see [Tickets](#tickets)           | GitHub labels per ticket type.                                         |
-| `chat.allowRemote`        | `false`                           | Answer chat requests from other machines too.                          |
+| `chat.allowRemote`        | `false`                           | Let other devices and addresses in, each paired once.                  |
+| `chat.pairingCode`        | random per start                  | A fixed pairing code (10+ characters), for a shared test environment.  |
+| `chat.passEnv`            | `[]`                              | More environment variables to pass to the agent, by name.              |
+| `chat.maxRuns`            | `4`                               | Agent runs at once, across all conversations.                          |
 | `chat`                    | `{}`                              | `false` turns the chat off and keeps pointing and links.               |
 | `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for the hotkey only.              |
 | `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there.        |
@@ -180,17 +197,20 @@ talks, leans in while you point, and droops when something goes wrong.
 - Content drawn on a canvas (maps, WebGL scenes) has no DOM, so pointing stops at the canvas.
 - Markup inside other components' shadow roots isn't reached.
 - Permalinks and tickets use GitHub.
+- Codex can read every file in the repository, `.env` files included; Claude is denied those. Keep secrets out of the working tree, or use Claude.
 
 ## Development
 
 ```bash
-npm run check        # format, typecheck, unit tests, build: the CI `check` job
-npm run test:e2e     # the example app under the dev server, a production build, and touch
+npm run check        # format, lint, typecheck, unit tests, build and package exports (CI `check`)
+npm run test:e2e     # the example app under the dev server, a production build, touch, and a paired device
+npm run test:compat  # the packed package against Vite 5, 6, 7 and 8
 npm run demo:record  # re-record the demo GIF above (needs ffmpeg)
 ```
 
 The tests use a stand-in agent that speaks both CLIs' formats and MCP, so they need no login. See
-[AGENTS.md](AGENTS.md) for how changes are verified.
+[CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [SECURITY.md](SECURITY.md) for how Klipp
+keeps the agent contained and how to report a problem.
 
 ## License
 

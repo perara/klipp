@@ -1,0 +1,22 @@
+name: 💡 Suggestion
+description: Something works, but could be better.
+labels: [suggestion]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: What's there now
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should change
+    validations:
+      required: true
+  - type: textarea
+    id: benefit
+    attributes:
+      label: Why it would be better
+    validations:
+      required: true

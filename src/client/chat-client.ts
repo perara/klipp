@@ -2,7 +2,7 @@ import type {
   AgentsResponse,
   ChatEvent,
   ChatRequest,
-  IssueDraft,
+  IssueRequest,
   IssueResponse,
   ToolResultRequest,
 } from '../shared/protocol.js';
@@ -70,12 +70,12 @@ export async function answerTool(endpoint: string, result: ToolResultRequest): P
   }).catch(() => undefined);
 }
 
-/** Files the issue through the server and returns its address. */
-export async function fileIssue(endpoint: string, draft: IssueDraft): Promise<string> {
+/** Files the ticket the agent proposed, through the server, and returns its address. */
+export async function fileIssue(endpoint: string, request: IssueRequest): Promise<string> {
   const response = await fetch(`${endpoint}issue`, {
     method: 'POST',
     headers: HEADERS,
-    body: JSON.stringify(draft),
+    body: JSON.stringify(request),
   });
   if (missing(response)) throw new Error('No chat server is running.');
   const result = (await response
@@ -83,4 +83,18 @@ export async function fileIssue(endpoint: string, draft: IssueDraft): Promise<st
     .catch(() => ({ error: `The server answered ${response.status}.` }))) as IssueResponse;
   if ('url' in result) return result.url;
   throw new Error(result.error);
+}
+
+/** Pairs this device with the dev server, which then answers it as it does localhost. */
+export async function pair(endpoint: string, code: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(`${endpoint}pair`, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify({ code }),
+    });
+    return response.ok ? undefined : await errorOf(response);
+  } catch {
+    return 'The dev server could not be reached to pair this device.';
+  }
 }

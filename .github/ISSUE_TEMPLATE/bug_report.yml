@@ -1,0 +1,40 @@
+name: 🐞 Bug
+description: Something in Klipp doesn't work as intended.
+labels: [bug]
+body:
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: A minimal app or the example app (`npm run example`) helps the most.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Klipp, Vite, Node.js, browser, and the agent if the chat is involved.
+      placeholder: klipp 0.4.0, vite 8.3, node 24, Chrome 141, codex 0.159
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Dev server output, browser console errors, or a Klipp ID (`klipp.id($0)` in DevTools).
+      render: text

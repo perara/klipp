@@ -1,0 +1,46 @@
+name: release
+
+# Pushing a tag vX.Y.Z runs every check, makes the GitHub release with the packed tarball and
+# the changelog's notes, and (once npm trusted publishing is set up and the repository variable
+# NPM_PUBLISH is "true") publishes to npm with provenance.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm ci
+      - name: The tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm run check
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm run test:e2e
+      - run: npm run test:compat
+      - run: npm pack
+      - name: Release notes from the changelog
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" klipp-*.tgz --verify-tag --title "Klipp ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
+      - name: Publish to npm
+        if: vars.NPM_PUBLISH == 'true'
+        run: npm publish --provenance --access public

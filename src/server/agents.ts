@@ -1,10 +1,12 @@
-import { existsSync } from 'node:fs';
-import { delimiter, isAbsolute, join, relative } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { AgentId } from '../shared/protocol.js';
 
 export interface RunSpec {
   /** The repository root: the agent works there, read-only. */
   root: string;
+  /** A directory private to this run, for files from `Agent.files`. */
+  dir: string;
   /** System prompt plus the page context and what the user typed. */
   system: string;
   message: string;
@@ -15,6 +17,8 @@ export interface RunSpec {
   mcpUrl: string;
   mcpToken: string;
   model?: string;
+  /** Directories the agent's own install lives in, which its sandbox must be able to read. */
+  install: string[];
 }
 
 export type AgentEvent =
@@ -30,7 +34,14 @@ export interface Agent {
   label: string;
   binary: string;
   args(spec: RunSpec): string[];
+  /** Variables the run sets, on top of those passed through from the dev server. */
   env(spec: RunSpec): Record<string, string>;
+  /** Prefixes of the dev server's variables the agent needs, such as its own login's. */
+  envPrefixes: readonly string[];
+  /** Files written to `spec.dir`, readable only by this user, before the run starts. */
+  files?(spec: RunSpec): Record<string, string>;
+  /** Where the command is installed, when the agent's sandbox needs to know. */
+  install?(command: string): string[];
   /** Written to the process's stdin, which is then closed. */
   input(spec: RunSpec): string;
   /** A parser for one run's stdout, one JSON line at a time. */
@@ -39,30 +50,93 @@ export interface Agent {
 
 const PAGE_TOOL_NAMES = ['point_at_element', 'inspect_element', 'propose_ticket'];
 
-/** Files no agent run reads, even when git tracks them. */
+/** Files Claude never reads, even when git tracks them. */
 const SECRET_FILES = [
   '.env',
   '.env.*',
+  '.envrc',
+  '.dev.vars',
+  '*.tfvars',
+  '*.tfstate',
   '*.pem',
   '*.key',
   '*.p12',
   '*.pfx',
+  '*.jks',
+  '*.keystore',
   'id_rsa*',
+  'id_ecdsa*',
   'id_ed25519*',
   '.npmrc',
+  '.pypirc',
+  '.netrc',
+  '.pgpass',
+  'credentials*.json',
+  '.git/config',
 ];
 
+/** What any program needs to start: where things are, who runs it, language, proxies, certificates. */
+const BASE_ENV = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TERM',
+  'LANG',
+  'LANGUAGE',
+  'TZ',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_USE_SYSTEM_CA',
+]);
+const BASE_PREFIXES = ['LC_', 'XDG_'];
+
+/**
+ * The dev server's environment, cut down to what the agent needs: the dev server may hold
+ * database URLs and tokens that are none of the agent's business. `extra` names more to pass.
+ */
+export function childEnv(
+  agent: Agent,
+  env: NodeJS.ProcessEnv,
+  extra: readonly string[] = [],
+): Record<string, string> {
+  const prefixes = [...BASE_PREFIXES, ...agent.envPrefixes];
+  const wanted = (name: string) =>
+    BASE_ENV.has(name) || extra.includes(name) || prefixes.some((p) => name.startsWith(p));
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      (pair): pair is [string, string] => pair[1] !== undefined && wanted(pair[0]),
+    ),
+  );
+}
+
+const text = (value: unknown) => (typeof value === 'string' ? value : '');
+
 const short = (root: string, path: unknown) => {
-  const text = String(path ?? '');
-  return isAbsolute(text) ? relative(root, text) || text : text;
+  const file = text(path);
+  return isAbsolute(file) ? relative(root, file) || file : file;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const parse = (line: string): Record<string, unknown> | undefined => {
   try {
     const value = JSON.parse(line) as unknown;
-    return typeof value === 'object' && value !== null
-      ? (value as Record<string, unknown>)
-      : undefined;
+    return isRecord(value) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -76,15 +150,6 @@ export const claude: Agent = {
   label: 'Claude',
   binary: 'claude',
   args(spec) {
-    const mcp = {
-      mcpServers: {
-        klipp: {
-          type: 'http',
-          url: spec.mcpUrl,
-          headers: { Authorization: `Bearer ${spec.mcpToken}` },
-        },
-      },
-    };
     const deny = SECRET_FILES.flatMap((pattern) => [`Read(${pattern})`, `Read(**/${pattern})`]);
     return [
       '-p',
@@ -99,7 +164,7 @@ export const claude: Agent = {
       'Read,Grep,Glob',
       '--strict-mcp-config',
       '--mcp-config',
-      JSON.stringify(mcp),
+      join(spec.dir, 'mcp.json'),
       '--settings',
       JSON.stringify({ permissions: { deny } }),
       '--permission-mode',
@@ -115,8 +180,22 @@ export const claude: Agent = {
       ...PAGE_TOOL_NAMES.map((name) => `mcp__klipp__${name}`),
     ];
   },
+  // The token stays out of the process list: the config is a file only this user can read.
+  files: (spec) => ({
+    'mcp.json': JSON.stringify({
+      mcpServers: {
+        klipp: {
+          type: 'http',
+          url: spec.mcpUrl,
+          headers: { Authorization: `Bearer ${spec.mcpToken}` },
+        },
+      },
+    }),
+  }),
   // Picking an element can take a while; the default MCP tool timeout would give up first.
   env: () => ({ MCP_TOOL_TIMEOUT: String(30 * 60 * 1000) }),
+  // Its login, and the settings for running it through Bedrock, Vertex or a gateway.
+  envPrefixes: ['ANTHROPIC_', 'CLAUDE_', 'AWS_', 'GOOGLE_', 'CLOUD_ML_', 'VERTEX_'],
   input: (spec) => spec.message,
   parser(root) {
     let wrote = false;
@@ -131,49 +210,75 @@ export const claude: Agent = {
         return [{ type: 'session', id: event.session_id }];
       }
       if (event.type === 'stream_event') {
-        const inner = event.event as { type?: string; delta?: { type?: string; text?: string } };
+        const inner = isRecord(event.event) ? event.event : {};
+        const delta = isRecord(inner.delta) ? inner.delta : {};
         if (inner.type === 'message_start' && wrote) return [{ type: 'break' }];
         if (
           inner.type === 'content_block_delta' &&
-          inner.delta?.type === 'text_delta' &&
-          inner.delta.text
+          delta.type === 'text_delta' &&
+          text(delta.text)
         ) {
           wrote = true;
-          return [{ type: 'text', delta: inner.delta.text }];
+          return [{ type: 'text', delta: text(delta.text) }];
         }
         return [];
       }
       if (event.type === 'assistant') {
-        const content = ((event.message as { content?: unknown[] })?.content ?? []) as Array<{
-          type: string;
-          name?: string;
-          input?: Record<string, unknown>;
-        }>;
-        return content.flatMap((block): AgentEvent[] => {
+        const message = isRecord(event.message) ? event.message : {};
+        const content = Array.isArray(message.content) ? message.content : [];
+        return content.filter(isRecord).flatMap((block): AgentEvent[] => {
           if (block.type !== 'tool_use') return [];
+          const input = isRecord(block.input) ? block.input : {};
           if (block.name === 'Read')
-            return [{ type: 'activity', label: `Reading ${short(root, block.input?.file_path)}` }];
+            return [{ type: 'activity', label: `Reading ${short(root, input.file_path)}` }];
           if (block.name === 'Grep')
-            return [{ type: 'activity', label: `Searching for ${String(block.input?.pattern)}` }];
+            return [{ type: 'activity', label: `Searching for ${text(input.pattern)}` }];
           if (block.name === 'Glob')
-            return [{ type: 'activity', label: `Looking for ${String(block.input?.pattern)}` }];
+            return [{ type: 'activity', label: `Looking for ${text(input.pattern)}` }];
           return [];
         });
       }
       if (event.type === 'result') {
         if (!event.is_error) return [{ type: 'done' }];
-        const text = String(event.result ?? 'Claude stopped with an error.');
-        const hint = LOGIN_HINT.test(text)
+        const message = text(event.result) || 'Claude stopped with an error.';
+        const hint = LOGIN_HINT.test(message)
           ? ' Run `claude` in a terminal and log in, then try again.'
           : '';
-        return [{ type: 'error', message: `${text}${hint}` }];
+        return [{ type: 'error', message: `${message}${hint}` }];
       }
       return [];
     };
   },
 };
 
-/** Codex, headless: a read-only sandbox, never asking for approval, Klipp's page tools allowed. */
+/**
+ * Where Codex is installed: its sandbox starts Codex again from there, so the sandbox must be
+ * able to read it. An npm install keeps the native binary in a sibling package.
+ */
+export function codexInstall(command: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const found = which(command, env);
+  if (!found) return [];
+  let real: string;
+  try {
+    real = realpathSync(found);
+  } catch {
+    return [];
+  }
+  const dirs = [dirname(dirname(real))];
+  const modules = real.lastIndexOf(`${sep}node_modules${sep}`);
+  if (modules >= 0) dirs.push(real.slice(0, modules + sep.length + 'node_modules'.length));
+  return dirs;
+}
+
+/** TOML for `{ "path" = "read", … }`; a JSON string is a valid TOML basic string. */
+const readable = (paths: string[]) =>
+  `{${paths.map((path) => `${JSON.stringify(path)}="read"`).join(', ')}}`;
+
+/**
+ * Codex, headless: a sandbox that reads only the repository (plus the system files programs
+ * need), writes nothing, and gives the commands Codex runs only a core environment; never
+ * asking for approval; Klipp's page tools allowed.
+ */
 export const codex: Agent = {
   id: 'codex',
   label: 'Codex',
@@ -181,6 +286,9 @@ export const codex: Agent = {
   args(spec) {
     const config = [
       'sandbox_mode="read-only"',
+      'default_permissions="klipp"',
+      `permissions.klipp.filesystem=${readable([':minimal', ':workspace_roots', ...spec.install])}`,
+      'shell_environment_policy.inherit="core"',
       'approval_policy="never"',
       `developer_instructions=${JSON.stringify(spec.system)}`,
       `mcp_servers.klipp.url=${JSON.stringify(spec.mcpUrl)}`,
@@ -202,18 +310,24 @@ export const codex: Agent = {
     ];
   },
   env: (spec) => ({ KLIPP_MCP_TOKEN: spec.mcpToken }),
+  envPrefixes: ['OPENAI_', 'CODEX_'],
+  install: (command) => codexInstall(command),
   input: (spec) => spec.message,
   parser() {
     let wrote = false;
     return (line) => {
       const event = parse(line);
       if (!event) return [];
-      const item = (event.item ?? {}) as { type?: string; text?: string; command?: string };
+      const item = isRecord(event.item) ? event.item : {};
       if (event.type === 'thread.started' && typeof event.thread_id === 'string') {
         return [{ type: 'session', id: event.thread_id }];
       }
-      if (event.type === 'item.started' && item.type === 'command_execution' && item.command) {
-        const command = item.command
+      if (
+        event.type === 'item.started' &&
+        item.type === 'command_execution' &&
+        text(item.command)
+      ) {
+        const command = text(item.command)
           .replace(/^(\/usr)?\/bin\/(ba|z)?sh -lc /, '')
           .replace(/^['"]|['"]$/g, '');
         return [
@@ -223,19 +337,20 @@ export const codex: Agent = {
           },
         ];
       }
-      if (event.type === 'item.completed' && item.type === 'agent_message' && item.text) {
+      if (event.type === 'item.completed' && item.type === 'agent_message' && text(item.text)) {
         const events: AgentEvent[] = wrote ? [{ type: 'break' }] : [];
         wrote = true;
-        return [...events, { type: 'text', delta: item.text }];
+        return [...events, { type: 'text', delta: text(item.text) }];
       }
       if (event.type === 'turn.completed') return [{ type: 'done' }];
       if (event.type === 'turn.failed' || event.type === 'error') {
-        const error = event.error as { message?: string } | undefined;
-        const text = String(error?.message ?? event.message ?? 'Codex stopped with an error.');
-        const hint = LOGIN_HINT.test(text)
+        const error = isRecord(event.error) ? event.error : {};
+        const message =
+          text(error.message) || text(event.message) || 'Codex stopped with an error.';
+        const hint = LOGIN_HINT.test(message)
           ? ' Run `codex login` in a terminal, then try again.'
           : '';
-        return [{ type: 'error', message: `${text}${hint}` }];
+        return [{ type: 'error', message: `${message}${hint}` }];
       }
       return [];
     };
@@ -244,8 +359,14 @@ export const codex: Agent = {
 
 export const AGENTS: Record<AgentId, Agent> = { claude, codex };
 
-/** Whether a command can be found: an absolute path that exists, or a name on PATH. */
-export function onPath(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (isAbsolute(command)) return existsSync(command);
-  return (env.PATH ?? '').split(delimiter).some((dir) => dir && existsSync(join(dir, command)));
+/** Where a command is: an absolute path that exists, or the first match on PATH. */
+export function which(command: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (isAbsolute(command)) return existsSync(command) ? command : undefined;
+  for (const dir of (env.PATH ?? '').split(delimiter)) {
+    if (dir && existsSync(join(dir, command))) return join(dir, command);
+  }
+  return undefined;
 }
+
+export const onPath = (command: string, env: NodeJS.ProcessEnv = process.env): boolean =>
+  which(command, env) !== undefined;

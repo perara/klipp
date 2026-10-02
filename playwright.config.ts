@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 const DEV = 'http://127.0.0.1:5281/';
 const BUILD = 'http://127.0.0.1:5282/sub/';
+/** The dev server as another device sees it: by a name that isn't localhost. */
+const REMOTE = 'http://laptop.test:5283/';
 const permissions = ['clipboard-read', 'clipboard-write'];
 
 /** The example app twice: under the dev server, and as a production build with a base path. */
@@ -25,22 +27,37 @@ export default defineConfig({
       url: BUILD,
       reuseExistingServer: false,
     },
+    {
+      command: 'npx vite examples/react-app --host 127.0.0.1 --port 5283 --strictPort',
+      env: { KLIPP_E2E_REMOTE: '1' },
+      url: 'http://127.0.0.1:5283/',
+      reuseExistingServer: false,
+    },
   ],
   projects: [
     {
       name: 'dev',
-      testIgnore: /touch/,
+      testIgnore: /touch|remote/,
       use: { ...devices['Desktop Chrome'], baseURL: DEV, permissions },
     },
     {
       name: 'build',
-      testIgnore: /touch/,
+      testIgnore: /touch|remote/,
       use: { ...devices['Desktop Chrome'], baseURL: BUILD, permissions },
     },
     {
       name: 'touch',
       testMatch: /touch/,
       use: { ...devices['Pixel 7'], baseURL: DEV, permissions },
+    },
+    {
+      name: 'remote',
+      testMatch: /remote/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: REMOTE,
+        launchOptions: { args: ['--host-resolver-rules=MAP laptop.test 127.0.0.1'] },
+      },
     },
   ],
 });

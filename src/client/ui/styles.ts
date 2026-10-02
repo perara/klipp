@@ -222,11 +222,11 @@ a { color: var(--accent); }
 .type-suggestion .badge { background: #8250df; }
 .type-question .badge { background: #1a7f37; }
 .tag { padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted); }
-.card-summary { margin-bottom: 6px; }
 .card-title { font-weight: 600; margin: 2px 0 4px; }
+.card-body { max-height: 220px; overflow: auto; margin-bottom: 6px; overscroll-behavior: contain; }
 .card details { margin-bottom: 8px; font-size: 13px; }
 .card summary { cursor: pointer; color: var(--muted); }
-.card-body { margin-top: 6px; }
+.card-footer { max-height: 160px; overflow: auto; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .card-status { color: var(--muted); font-size: 13px; }
 .chip {
   display: flex;

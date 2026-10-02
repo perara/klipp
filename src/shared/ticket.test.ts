@@ -52,7 +52,13 @@ describe('ticketProblems', () => {
     ]);
     expect(ticketProblems({ ...bug, steps: 'click' })).toEqual([
       'missing for a bug: steps',
-      'steps must be a list',
+      'steps must be a list of strings',
+    ]);
+    expect(ticketProblems({ ...bug, steps: ['open', { click: 'Save' }] })).toEqual([
+      'steps must be a list of strings',
+    ]);
+    expect(ticketProblems({ ...bug, code_findings: ['a.ts:1'], workaround: 3 })).toEqual([
+      'workaround, code_findings must be text',
     ]);
   });
 });

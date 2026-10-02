@@ -47,6 +47,24 @@ export interface Ticket {
   code_findings?: string;
 }
 
+/** Every field but type, steps and severity is text. */
+const TEXT_FIELDS: Array<keyof Ticket> = [
+  'title',
+  'summary',
+  'actual',
+  'expected',
+  'frequency',
+  'need',
+  'who_benefits',
+  'workaround',
+  'proposal',
+  'current',
+  'benefit',
+  'question',
+  'answer',
+  'code_findings',
+];
+
 /** What each type needs before it is a ticket the team can act on. */
 export const REQUIRED: Record<TicketType, Array<keyof Ticket>> = {
   bug: ['actual', 'expected', 'steps', 'severity'],
@@ -79,8 +97,14 @@ export function ticketProblems(input: Record<string, unknown>): string[] {
   if (input.severity !== undefined && !SEVERITIES.includes(input.severity as Severity)) {
     problems.push(`severity must be one of ${SEVERITIES.join(', ')}`);
   }
-  if (input.steps !== undefined && !Array.isArray(input.steps))
-    problems.push('steps must be a list');
+  const steps = input.steps;
+  if (steps !== undefined && !(Array.isArray(steps) && steps.every((s) => typeof s === 'string'))) {
+    problems.push('steps must be a list of strings');
+  }
+  const notText = TEXT_FIELDS.filter(
+    (key) => input[key] !== undefined && typeof input[key] !== 'string',
+  );
+  if (notText.length) problems.push(`${notText.join(', ')} must be text`);
   return problems;
 }
 
@@ -94,7 +118,12 @@ export function ticketBody(ticket: Ticket): string {
     ...(ticket.severity ? [`severity: ${ticket.severity}`] : []),
     'reported with Klipp',
   ];
-  const lines = [tags.join(' · '), '', ticket.summary.trim(), ''];
+  return `${tags.join(' · ')}\n\n${ticketText(ticket)}`;
+}
+
+/** The ticket's own words: the summary and its type's sections, as Markdown. */
+export function ticketText(ticket: Ticket): string {
+  const lines = [ticket.summary.trim(), ''];
   if (ticket.type === 'bug') {
     lines.push(
       ...section('What happens', ticket.actual),

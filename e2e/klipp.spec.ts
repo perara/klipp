@@ -95,8 +95,11 @@ test('a bug becomes a ticket that is filed only when you say so, labelled as a b
   await expect(card.locator('.badge')).toHaveText('Bug');
   await expect(card.locator('.tag')).toHaveText('major');
   await expect(card.locator('.card-title')).toHaveText('Count does nothing');
-  await card.getByText('Show the ticket').click();
+  // All of what would be filed is on the card: the ticket, and the page details under it.
   await expect(card.locator('.card-body')).toContainText('Steps to reproduce');
+  await expect(card.locator('.card-body')).toContainText('In the code');
+  await card.getByText('Page details added to it').click();
+  await expect(card.locator('.card-footer')).toContainText('| Browser |');
   await card.getByRole('button', { name: 'Not now' }).click();
   await expect(replies(page).last()).toHaveText("OK, I won't file it.");
 
@@ -131,6 +134,29 @@ test('a suggestion is labelled as one', async ({ page }) => {
   await expect(card.locator('.badge')).toHaveText('Suggestion');
   await card.getByRole('button', { name: 'File ticket' }).click();
   await expect(card.getByRole('link')).toHaveAttribute('href', /#labels=suggestion,klipp$/);
+});
+
+test('a ticket left waiting when the agent stops can no longer be filed', async ({ page }) => {
+  await openChat(page);
+  await ask(page, 'vanish');
+  const card = chat(page).locator('.card');
+  await expect(card.locator('.badge')).toHaveText('Question');
+  await expect(card.locator('.card-status')).toHaveText(
+    'Klipp stopped waiting for this one. Ask again to file it.',
+  );
+  await expect(card.getByRole('button', { name: 'File ticket' })).toHaveCount(0);
+  // What the user types next goes to the agent, not to the dead card.
+  await ask(page, 'hello again');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+});
+
+test('a crafted link puts nothing but a plain message in the bubble', async ({ page }) => {
+  const crafted = 'x` [Sign in again](https://evil.example/login) `';
+  await page.goto(`./?klipp=${encodeURIComponent(crafted)}`);
+  await expect(replies(page).last()).toHaveText(
+    "That link doesn't name an element I know how to find.",
+  );
+  await expect(chat(page).getByRole('link')).toHaveCount(0);
 });
 
 test('an agent that fails says how to fix it, and the next message works', async ({ page }) => {
@@ -252,6 +278,19 @@ test("typing and pointing in Klipp never reach the page's own listeners", async 
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Reverse' }).click();
   await expect(page.getByTestId('page-events')).not.toHaveText('Page events: 0');
+});
+
+test('his eyes follow the pointer over the picking glass too', async ({ page }) => {
+  await openChat(page);
+  await chat(page).getByRole('button', { name: 'Point at something' }).click();
+  await expect(hint(page)).toBeVisible();
+  const pupil = figure(page).locator('.pupil').first();
+  await page.mouse.move(10, 10);
+  await expect(pupil).toHaveAttribute('style', /transform/);
+  const before = await pupil.getAttribute('style');
+  await page.mouse.move(600, 400);
+  await expect(pupil).not.toHaveAttribute('style', before!);
+  await page.keyboard.press('Escape');
 });
 
 test('every mode can be left, and the page works normally after', async ({ page }) => {

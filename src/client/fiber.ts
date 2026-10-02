@@ -30,7 +30,8 @@ export function reactAncestry(element: Element): Ancestry | undefined {
   const callSites: string[] = [];
   const keys: string[] = [];
   for (; fiber; fiber = fiber.return) {
-    if (fiber.key !== null && fiber.key !== undefined) keys.push(String(fiber.key));
+    // React keeps every key as a string.
+    if (typeof fiber.key === 'string') keys.push(fiber.key);
     if (typeof fiber.type === 'string') continue;
     const props = fiber.memoizedProps;
     const site =

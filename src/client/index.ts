@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from '../shared/runtime-config.js';
 import { startCapture } from './capture.js';
+import { pair } from './chat-client.js';
 import { identify, resolve } from './identify.js';
 import type { KlippApp } from './ui/app.js';
 
@@ -56,12 +57,32 @@ export function matchesHotkey(event: KeyboardEvent, hotkey: Hotkey): boolean {
   return event.key.toLowerCase() === hotkey.key;
 }
 
+const PAIR_PARAM = 'klipp-pair';
+
+/**
+ * Takes the pairing code out of the address before anything can see or keep it, and pairs
+ * this device with the dev server.
+ */
+function pairFromLink(config: RuntimeConfig, app: () => Promise<KlippApp>) {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get(PAIR_PARAM);
+  if (code === null) return;
+  url.searchParams.delete(PAIR_PARAM);
+  window.history.replaceState(window.history.state, '', url);
+  void pair(config.endpoint, code).then((problem) =>
+    app().then((a) =>
+      a.notify(problem ?? 'This device is paired. Tell me what you noticed!', Boolean(problem)),
+    ),
+  );
+}
+
 /** Installs the hotkey, the deep-link handler and the paperclip. The UI itself loads on first use. */
 export function start(config: RuntimeConfig): void {
   if (typeof window === 'undefined' || window.klipp) return;
   startCapture();
   let loading: Promise<KlippApp> | undefined;
   const app = () => (loading ??= import('./ui/app.js').then((m) => m.createApp(config)));
+  if (config.chat) pairFromLink(config, app);
   window.klipp = {
     id: (element) => identify(element).id,
     find: (id) => resolve(id).element,

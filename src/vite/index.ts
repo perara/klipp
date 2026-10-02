@@ -1,8 +1,15 @@
 import { existsSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadEnv, normalizePath, type Plugin, type ResolvedConfig } from 'vite';
-import { createKlippMiddleware } from '../server/handler.js';
+import {
+  loadEnv,
+  normalizePath,
+  type Plugin,
+  type PreviewServer,
+  type ResolvedConfig,
+  type ViteDevServer,
+} from 'vite';
+import { createKlippMiddleware, type KlippMiddleware } from '../server/handler.js';
 import type { KlippManifest, ManifestEntry } from '../shared/manifest.js';
 import type { AgentId, IssueDraft } from '../shared/protocol.js';
 import type { TicketType } from '../shared/ticket.js';
@@ -25,8 +32,25 @@ export interface ChatOptions {
   agent?: AgentId;
   /** Passed to the agent as its model. Default: the agent's own default. */
   model?: string;
-  /** Answer chat requests from other machines too, such as a phone on the LAN. Default: false. */
+  /**
+   * Let other devices and addresses use the chat too, such as a phone on the LAN or a tunnel.
+   * Each device pairs once with the link the dev server prints. Default: false, which answers
+   * only a browser on this machine at localhost.
+   */
   allowRemote?: boolean;
+  /**
+   * A fixed pairing code, at least 10 characters, for a shared test environment whose testers
+   * shouldn't need a new link after every restart. Default: a new random code on each start.
+   */
+  pairingCode?: string;
+  /**
+   * More of the dev server's environment variables to pass to the agent, by name. The agent
+   * gets only what it needs to start and log in: PATH, HOME, locale, proxies, and its own
+   * variables (`ANTHROPIC_*`, `CLAUDE_*` or `OPENAI_*`, `CODEX_*`, and the like).
+   */
+  passEnv?: string[];
+  /** Agent runs at once, across every conversation. Default: 4. */
+  maxRuns?: number;
   /** Replace an agent's command and leading arguments, as the tests do. */
   commands?: Partial<Record<AgentId, string[]>>;
   /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
@@ -103,32 +127,32 @@ export default function klipp(options: KlippOptions = {}): Plugin {
   let config: ResolvedConfig;
   let enabled = false;
   let git: GitInfo = {};
-  let dirty: { at: number; files: string[] } | undefined;
-  let middleware: ReturnType<typeof createKlippMiddleware> | undefined;
+  /** `git status`, refreshed in the background at most every two seconds. */
+  let dirty: { at: number; files: Promise<string[]> } | undefined;
+  let middleware: KlippMiddleware | undefined;
 
   const repoPath = (file: string) =>
     relative(git.toplevel ?? config.root, file)
       .split(sep)
       .join('/');
 
-  function currentDirtyFiles(): string[] {
-    if (!git.toplevel) return [];
+  function currentDirtyFiles(): Promise<string[]> {
+    if (!git.toplevel) return Promise.resolve([]);
     if (!dirty || Date.now() - dirty.at > 2000) {
       dirty = { at: Date.now(), files: dirtyFiles(git.toplevel) };
     }
     return dirty.files;
   }
 
-  function manifest(dev: boolean): KlippManifest {
+  async function manifest(): Promise<KlippManifest> {
     const repo = options.repo ?? git.repo;
     const commit = options.commit ?? git.commit;
-    const changed = currentDirtyFiles().filter((file) => sidsByFile.has(file));
+    const changed = (await currentDirtyFiles()).filter((file) => sidsByFile.has(file));
     return {
       version: 1,
       ...(repo ? { repo } : {}),
       ...(commit ? { commit } : {}),
       ...(changed.length ? { dirtyFiles: changed } : {}),
-      ...(dev && git.toplevel ? { root: normalizePath(git.toplevel) } : {}),
       entries: Object.fromEntries(entries),
     };
   }
@@ -165,21 +189,46 @@ export default function klipp(options: KlippOptions = {}): Plugin {
     };
   }
 
-  /** One middleware for both servers; it serves the manifest only under development. */
-  function klippMiddleware() {
-    if (middleware) return middleware;
+  /**
+   * The chat's routes, on the dev or preview server; the dev server also serves the manifest.
+   * Closing the server stops every agent run.
+   */
+  function mountChat(server: ViteDevServer | PreviewServer, dev: boolean) {
     const chat = options.chat === false ? {} : (options.chat ?? {});
     const envDir = typeof config.envDir === 'string' ? config.envDir : config.root;
-    const env = loadEnv(config.mode, envDir, ['KLIPP_', 'GITHUB_TOKEN', 'GH_TOKEN']);
+    const env = loadEnv(config.mode, envDir, [
+      'KLIPP_',
+      'GITHUB_TOKEN',
+      'GH_TOKEN',
+      'GH_HOST',
+      'GH_ENTERPRISE_TOKEN',
+      'GITHUB_ENTERPRISE_TOKEN',
+    ]);
     const repo = options.repo ?? git.repo;
-    middleware = createKlippMiddleware({
+    middleware?.close();
+    const mounted = createKlippMiddleware({
       root: git.toplevel ?? config.root,
       env,
       ...(repo ? { repo } : {}),
-      ...(config.command === 'serve' ? { manifest: () => manifest(true) } : {}),
+      ...(dev ? { manifest } : {}),
       ...chat,
     });
-    return middleware;
+    middleware = mounted;
+    server.middlewares.use(mounted);
+    server.httpServer?.once('close', () => mounted.close());
+    if (mounted.pairing) {
+      const print = server.printUrls.bind(server);
+      server.printUrls = () => {
+        print();
+        const code = mounted.pairing!.code;
+        const network = server.resolvedUrls?.network[0];
+        config.logger.info(
+          network
+            ? `  ➜  Klipp:   pair other devices with ${network}?klipp-pair=${code}`
+            : `  ➜  Klipp:   pair other devices by adding ?klipp-pair=${code} to the address (start with --host to reach the network)`,
+        );
+      };
+    }
   }
 
   return {
@@ -188,7 +237,7 @@ export default function klipp(options: KlippOptions = {}): Plugin {
 
     configResolved(resolved) {
       config = resolved;
-      enabled = isEnabled(options.enabled, resolved.command, process.env) && !resolved.build.ssr;
+      enabled = isEnabled(options.enabled, resolved.command, process.env);
       if (!enabled) return;
       git = readGit(resolved.root);
       // Lets the dev server serve the runtime when Klipp is linked from outside the project.
@@ -197,11 +246,13 @@ export default function klipp(options: KlippOptions = {}): Plugin {
     },
 
     configureServer(server) {
-      if (enabled) server.middlewares.use(klippMiddleware());
+      if (enabled) mountChat(server, true);
     },
 
     configurePreviewServer(server) {
-      if (enabled) server.middlewares.use(klippMiddleware());
+      // Only for a build made with Klipp; it left its manifest in the output.
+      const outDir = resolve(config.root, config.build.outDir);
+      if (enabled && existsSync(join(outDir, BUILD_MANIFEST))) mountChat(server, false);
     },
 
     resolveId(id) {
@@ -227,6 +278,7 @@ export default function klipp(options: KlippOptions = {}): Plugin {
         const result = await stamp(code, file, {
           file: rel,
           stampComponents: options.stampComponents ?? true,
+          warn: (message) => config.logger.warn(`[klipp] ${message}`, { timestamp: true }),
           isExternal: async (source) => {
             const resolved = await this.resolve(source, file, { skipSelf: true });
             return (
@@ -250,12 +302,14 @@ export default function klipp(options: KlippOptions = {}): Plugin {
       },
     },
 
-    generateBundle() {
-      if (!enabled || config.command !== 'build') return;
+    async generateBundle() {
+      // A server bundle is stamped like the client's, so hydrated markup keeps its IDs; the
+      // manifest goes with the client.
+      if (!enabled || config.command !== 'build' || config.build.ssr) return;
       this.emitFile({
         type: 'asset',
         fileName: BUILD_MANIFEST,
-        source: JSON.stringify(manifest(false)),
+        source: JSON.stringify(await manifest()),
       });
     },
   };

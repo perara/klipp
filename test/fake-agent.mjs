@@ -25,7 +25,10 @@ function bridge() {
       auth: `Bearer ${process.env.KLIPP_MCP_TOKEN}`,
     };
   }
-  const server = JSON.parse(after('--mcp-config')).mcpServers.klipp;
+  // Like Claude Code, the config is a file or the JSON itself.
+  const config = after('--mcp-config');
+  const json = config.trimStart().startsWith('{') ? config : readFileSync(config, 'utf8');
+  const server = JSON.parse(json).mcpServers.klipp;
   return { url: server.url, auth: server.headers.Authorization };
 }
 
@@ -159,6 +162,25 @@ if (q.includes('what did i say')) {
     benefit: 'People know what it reverses.',
   });
   say(result.startsWith('Filed') ? 'Filed! 📎' : `Noted: ${result}`);
+} else if (q.includes('vanish')) {
+  // Shows a ticket, then stops without waiting for the answer, as an agent that crashes would.
+  void callTool('propose_ticket', {
+    type: 'question',
+    title: 'What does Reverse do?',
+    summary: 'The user asked what Reverse does.',
+    question: 'What does Reverse do?',
+  }).catch(() => undefined);
+  await new Promise((done) => setTimeout(done, 1500));
+  say('I have to go.');
+  if (codex) out({ type: 'turn.completed', usage: {} });
+  else
+    out({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: session });
+  process.exit(0);
+} else if (q.includes('environment')) {
+  // What a run is given: the dev server's own secrets stay out.
+  say(`DATABASE_URL: ${process.env.DATABASE_URL ? 'visible' : 'hidden'}`);
+} else if (q.includes('context')) {
+  say(`page_context: ${message.split('</page_context>').length - 1} closing tag`);
 } else if (page.element && q.includes('describe')) {
   const { tag, states, beneath } = page.element;
   say(
@@ -173,9 +195,8 @@ if (q.includes('what did i say')) {
   } else {
     const element = JSON.parse(result);
     reading(element.code.file, element.code.line);
-    const source = readFileSync(element.code.file, 'utf8')
-      .split('\n')
-      [element.code.line - 1].trim();
+    const lines = readFileSync(element.code.file, 'utf8').split('\n');
+    const source = lines[element.code.line - 1].trim();
     say(`I read it: \`${source}\``);
   }
 } else {

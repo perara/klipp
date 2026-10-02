@@ -12,6 +12,8 @@ export interface AgentInfo {
 export interface AgentsResponse {
   agents: AgentInfo[];
   preferred: AgentId;
+  /** Why no agent can run here at all, such as on Windows. */
+  problem?: string;
 }
 
 /** A short reference to another element on the page. */
@@ -97,11 +99,28 @@ export type ChatEvent =
   | { type: 'error'; message: string }
   | { type: 'done' };
 
+/** What is filed: the ticket the user approved, with the page details appended. */
 export interface IssueDraft {
   title: string;
   body: string;
   /** Sets the issue's labels. */
   type?: TicketType;
+}
+
+/**
+ * Files a ticket the agent proposed and the user approved, once. The server has the ticket;
+ * the browser adds the page and element details it showed the user under it.
+ */
+export interface IssueRequest {
+  conversation: string;
+  /** The id of the propose_ticket call that is waiting on the user. */
+  proposal: string;
+  footer: string;
+}
+
+/** Pairs another device when `allowRemote` is on, with the code the dev server printed. */
+export interface PairRequest {
+  code: string;
 }
 
 export type IssueResponse = { url: string } | { error: string };

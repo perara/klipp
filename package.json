@@ -2,22 +2,31 @@
   "name": "klipp",
   "version": "0.4.0",
   "description": "A paperclip in your web app that turns what testers notice into actionable tickets: it classifies bugs, feature requests and suggestions, asks for what's missing, and files them on GitHub, using your own Claude Code or Codex.",
-  "license": "MIT",
-  "author": "Per-Arne Andersen",
-  "type": "module",
+  "keywords": [
+    "vite-plugin",
+    "react",
+    "bug-report",
+    "triage",
+    "issue-tracker",
+    "devtools",
+    "qa",
+    "claude-code",
+    "codex",
+    "mcp"
+  ],
+  "homepage": "https://github.com/perara/klipp#readme",
+  "bugs": {
+    "url": "https://github.com/perara/klipp/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/perara/klipp.git"
   },
-  "keywords": [
-    "vite-plugin",
-    "debugging",
-    "bug-report",
-    "react",
-    "devtools"
-  ],
+  "license": "MIT",
+  "author": "Per-Arne Andersen",
+  "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "exports": {
     "./vite": {
@@ -37,35 +46,51 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json && tsc -p examples/react-app/tsconfig.json",
-    "test": "vitest run --maxWorkers=2",
+    "lint": "eslint . --max-warnings 0",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "check": "npm run format && npm run typecheck && npm test && npm run build",
+    "test": "vitest run --maxWorkers=2",
+    "test:coverage": "vitest run --maxWorkers=2 --coverage",
     "test:e2e": "npm run build && playwright test",
+    "test:compat": "npm run build && node scripts/compat/vite-compat.mjs",
+    "check:package": "publint --strict && attw --pack . --profile esm-only",
+    "check": "npm run format && npm run lint && npm run typecheck && npm test && npm run build && npm run check:package",
     "example": "npm run build && vite examples/react-app",
     "demo:record": "npm run build && node scripts/demo/record.mjs",
-    "brand": "node scripts/brand/brand.mjs"
+    "brand": "node scripts/brand/brand.mjs",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "@babel/parser": "^7.29.7",
     "magic-string": "^0.30.21"
   },
   "peerDependencies": {
-    "vite": ">=5"
+    "vite": "^5.4.12 || ^6.0.9 || ^7.0.0 || ^8.0.0"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "1.61.1",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
     "happy-dom": "^20.14.5",
     "opentype.js": "^1.3.4",
     "prettier": "^3.6.2",
+    "publint": "^0.3.25",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

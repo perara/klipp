@@ -10,6 +10,8 @@ export interface StampContext {
   stampComponents: boolean;
   /** True when a component imported from `source` is someone else's code that must not get extra props. */
   isExternal(source: string): Promise<boolean>;
+  /** Told when a file can't be parsed and is left as it is. */
+  warn?(message: string): void;
 }
 
 export interface Stamped {
@@ -64,11 +66,23 @@ const idName = (node: unknown): string | undefined =>
 
 const isHostName = (name: string): boolean => /^[a-z]/.test(name) || name.includes('-');
 
-function parseProgram(code: string, file: string): AstNode | undefined {
-  const plugins: ParserPlugin[] = /\.tsx$/.test(file) ? ['jsx', 'typescript'] : ['jsx'];
+/** What app code is written in: JSX, TypeScript, decorators (MobX, Angular-style) and import attributes. */
+function parserPlugins(file: string): ParserPlugin[] {
+  return [
+    'jsx',
+    ...(/\.tsx$/.test(file) ? (['typescript'] as const) : []),
+    'decorators-legacy',
+    'deprecatedImportAssert',
+  ];
+}
+
+function parseProgram(code: string, file: string, ctx: StampContext): AstNode | undefined {
   try {
+    const plugins = parserPlugins(file);
     return parse(code, { sourceType: 'module', plugins }).program as unknown as AstNode;
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    ctx.warn?.(`${ctx.file} was left without Klipp IDs: it could not be parsed (${reason}).`);
     return undefined;
   }
 }
@@ -155,7 +169,7 @@ export async function stamp(
   ctx: StampContext,
 ): Promise<Stamped | undefined> {
   if (!code.includes('<')) return undefined;
-  const program = parseProgram(code, file);
+  const program = parseProgram(code, file, ctx);
   if (!program) return undefined;
   const { sites, imports } = collect(program, ctx.file);
   if (!sites.length) return undefined;

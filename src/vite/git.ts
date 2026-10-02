@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 export interface GitInfo {
   toplevel?: string;
@@ -18,14 +18,18 @@ function git(cwd: string, args: string[]): string | undefined {
   }
 }
 
-/** `git@github.com:o/r.git`, `ssh://git@github.com/o/r`, `https://token@github.com/o/r.git` → `https://github.com/o/r`. */
+/**
+ * `git@github.com:o/r.git`, `ssh://git@github.com/o/r`, `https://token@github.com/o/r.git` →
+ * `https://github.com/o/r`. A web remote keeps its port; an SSH port says nothing about the web.
+ */
 export function normalizeRemote(remote: string): string | undefined {
   const scp = /^[\w.-]+@([\w.-]+):(.+?)(?:\.git)?\/?$/.exec(remote.trim());
   if (scp) return `https://${scp[1]}/${scp[2]}`;
   try {
     const url = new URL(remote.trim());
     if (!['http:', 'https:', 'ssh:', 'git:'].includes(url.protocol)) return undefined;
-    return `https://${url.hostname}${url.pathname.replace(/\/$/, '').replace(/\.git$/, '')}`;
+    const host = url.protocol === 'http:' || url.protocol === 'https:' ? url.host : url.hostname;
+    return `https://${host}${url.pathname.replace(/\/$/, '').replace(/\.git$/, '')}`;
   } catch {
     return undefined;
   }
@@ -59,7 +63,14 @@ export function parsePorcelain(output: string): string[] {
   return files;
 }
 
-export function dirtyFiles(toplevel: string): string[] {
-  const output = git(toplevel, ['status', '--porcelain', '-z', '--untracked-files=all']);
-  return output ? parsePorcelain(output) : [];
+/** Files that differ from HEAD, untracked ones included. Runs in the background. */
+export function dirtyFiles(toplevel: string): Promise<string[]> {
+  return new Promise((done) => {
+    execFile(
+      'git',
+      ['status', '--porcelain', '-z', '--untracked-files=all'],
+      { cwd: toplevel, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => done(error ? [] : parsePorcelain(stdout)),
+    );
+  });
 }

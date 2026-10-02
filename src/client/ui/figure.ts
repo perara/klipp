@@ -75,7 +75,9 @@ export class Figure {
       },
       this.root,
     );
-    window.addEventListener('pointermove', this.track, { passive: true });
+    // Capture phase: Klipp's own root stops its pointer events from bubbling to the page, and
+    // the eyes should follow the pointer over the chat and the picking glass too.
+    window.addEventListener('pointermove', this.track, { passive: true, capture: true });
   }
 
   get mood(): Mood {

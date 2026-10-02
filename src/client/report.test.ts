@@ -51,6 +51,12 @@ describe('redactedUrl', () => {
     const page = 'https://app.test/map?demo=1&person=Ola&klipp=old#/x?demo=1&q=Kari';
     expect(redactedUrl(page, ['demo'])).toBe('https://app.test/map?demo=1&person=…#/x?demo=1&q=…');
   });
+
+  it('never carries a pairing code, even when told to keep it', () => {
+    const page = 'https://app.test/?klipp-pair=ABCDEF2345&demo=1';
+    expect(redactedUrl(page, ['klipp-pair', 'demo'])).toBe('https://app.test/?demo=1');
+    expect(deepLink(page, 'aaaaaaaa', ['klipp-pair'])).toBe('https://app.test/?klipp=aaaaaaaa');
+  });
 });
 
 describe('deepLink', () => {

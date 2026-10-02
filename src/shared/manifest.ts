@@ -18,8 +18,6 @@ export interface KlippManifest {
   commit?: string;
   /** Files that differed from `commit` in the working tree the build was made from. */
   dirtyFiles?: string[];
-  /** Absolute repository root. Development only, for opening files in an editor. */
-  root?: string;
   entries: Record<string, ManifestEntry>;
 }
 

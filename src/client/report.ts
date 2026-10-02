@@ -60,13 +60,16 @@ export function elementFacts(
   return { tag: el.localName, attributes, states, box };
 }
 
+/** Klipp's own parameters: a link's element, and a pairing code, which is a secret. */
+const OWN_PARAMS = new Set(['klipp', 'klipp-pair']);
+
 /** The key of each query pair, skipping Klipp's own and repeats. */
 function queryPairs(query: string): Array<[string, string]> {
   const seen = new Set<string>();
   const pairs: Array<[string, string]> = [];
   for (const pair of query.split('&')) {
     const key = pair.split('=', 1)[0]!;
-    if (!key || key === 'klipp' || seen.has(key)) continue;
+    if (!key || OWN_PARAMS.has(key) || seen.has(key)) continue;
     seen.add(key);
     pairs.push([key, pair]);
   }

@@ -9,9 +9,9 @@ const calls: Array<[string, Record<string, unknown>]> = [];
 
 beforeAll(async () => {
   await bridge.start();
-  bridge.register('c1', async (name, args) => {
+  bridge.register('c1', (name, args) => {
     calls.push([name, args]);
-    return { text: `echo ${String(args.word)}` };
+    return Promise.resolve({ text: `echo ${typeof args.word === 'string' ? args.word : '?'}` });
   });
 });
 afterAll(() => bridge.close());
@@ -85,6 +85,31 @@ describe('McpBridge', () => {
       await post({ jsonrpc: '2.0', id: 6, method: 'resources/list' })
     ).json()) as { error: { code: number } };
     expect(method.error.code).toBe(-32601);
+  });
+
+  it('answers malformed messages with errors, and keeps running', async () => {
+    const invalid = {
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32600, message: 'Invalid Request' },
+    };
+    expect(await (await post(null)).json()).toEqual(invalid);
+    expect(await (await post([null, 3])).json()).toEqual([invalid, invalid]);
+    const bad = await fetch(bridge.url('c1'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bridge.token}` },
+      body: '{',
+    });
+    expect(bad.status).toBe(400);
+    calls.length = 0;
+    await post({
+      jsonrpc: '2.0',
+      id: 8,
+      method: 'tools/call',
+      params: { name: 'echo', arguments: 'not an object' },
+    });
+    expect(calls).toEqual([['echo', {}]]);
+    expect((await post({ jsonrpc: '2.0', id: 9, method: 'ping' })).status).toBe(200);
   });
 
   it('answers a batch with a batch', async () => {

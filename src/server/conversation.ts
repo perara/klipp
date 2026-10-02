@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
   AgentId,
@@ -8,8 +11,8 @@ import type {
   ClientToolResult,
   PageContext,
 } from '../shared/protocol.js';
-import { ticketProblems } from '../shared/ticket.js';
-import type { Agent } from './agents.js';
+import { ticketProblems, type Ticket } from '../shared/ticket.js';
+import { childEnv, type Agent, type AgentEvent, type RunSpec } from './agents.js';
 import type { McpBridge, McpResult } from './mcp.js';
 import { SYSTEM_PROMPT } from './prompt.js';
 
@@ -25,6 +28,8 @@ export interface Conversation {
   busy: boolean;
   /** Page-tool calls waiting for the browser. */
   pending: Map<string, (result: ClientToolResult) => void>;
+  /** Tickets shown to the user and waiting on their decision, by tool-call id. */
+  proposals: Map<string, Ticket>;
   touched: number;
 }
 
@@ -50,6 +55,7 @@ export class Conversations {
       agent,
       busy: false,
       pending: new Map(),
+      proposals: new Map(),
       touched: now,
     };
     this.all.set(created.id, created);
@@ -58,6 +64,13 @@ export class Conversations {
 
   find(id: string): Conversation | undefined {
     return this.all.get(id);
+  }
+
+  /** How many agent runs are going on. */
+  running(): number {
+    let count = 0;
+    for (const conversation of this.all.values()) if (conversation.busy) count++;
+    return count;
   }
 }
 
@@ -68,14 +81,18 @@ export interface RunDeps {
   root: string;
   bridge: McpBridge;
   model?: string;
+  /** Environment variables passed to the agent beyond the ones it needs. */
+  passEnv?: readonly string[];
   emit(event: ChatEvent): void;
   /** Aborts when the page goes away; the run is stopped. */
   signal: AbortSignal;
 }
 
 function checkToolInput(name: string, input: Record<string, unknown>): string | undefined {
-  const text = (key: string) =>
-    typeof input[key] === 'string' && (input[key] as string).trim() !== '';
+  const text = (key: string) => {
+    const value = input[key];
+    return typeof value === 'string' && value.trim() !== '';
+  };
   if (name === 'point_at_element' && !text('prompt')) return 'prompt must be a non-empty string.';
   if (name === 'inspect_element' && !text('id')) return 'id must be a non-empty string.';
   if (name === 'propose_ticket') {
@@ -97,42 +114,42 @@ function askBrowser(
   const problem = checkToolInput(name, input);
   if (problem) return Promise.resolve<McpResult>({ text: problem, isError: true });
   const id = randomUUID();
+  if (name === 'propose_ticket') conversation.proposals.set(id, input as unknown as Ticket);
   return new Promise<McpResult>((resolve) => {
-    conversation.pending.set(id, (result) =>
-      resolve({ text: result.content, isError: result.isError ?? false }),
-    );
+    conversation.pending.set(id, (result) => {
+      conversation.proposals.delete(id);
+      resolve({ text: result.content, isError: result.isError ?? false });
+    });
     deps.emit({ type: 'client_tool', call: { id, name: name as ClientToolName, input } });
   });
 }
 
-/** One message: runs the agent in the background until it answers, streaming what it does. */
-export async function runTurn(
-  conversation: Conversation,
-  text: string,
-  page: PageContext,
-  deps: RunDeps,
-) {
-  const { agent } = deps;
-  const newSession = randomUUID();
-  const message = `<page_context>\n${JSON.stringify(page)}\n</page_context>\n\n${text}`;
-  const spec = {
-    root: deps.root,
-    system: SYSTEM_PROMPT,
-    message,
-    ...(conversation.session ? { session: conversation.session } : {}),
-    newSession,
-    mcpUrl: deps.bridge.url(conversation.id),
-    mcpToken: deps.bridge.token,
-    ...(deps.model ? { model: deps.model } : {}),
-  };
-  deps.bridge.register(conversation.id, (name, input) =>
-    askBrowser(conversation, deps, name, input),
-  );
+/**
+ * The page context as the agent reads it. It comes from the page, so it can't close its own
+ * tag: every `<` is escaped, which leaves the JSON as it was.
+ */
+export function pageMessage(page: PageContext, text: string): string {
+  const context = JSON.stringify(page).replace(/</g, '\\u003c');
+  return `<page_context>\n${context}\n</page_context>\n\n${text}`;
+}
 
+interface Spawned {
+  exit: number | null;
+  finished: boolean;
+  stderr: string;
+}
+
+/** Starts the agent's process and streams its events until it exits. */
+async function spawnAgent(
+  conversation: Conversation,
+  spec: RunSpec,
+  deps: RunDeps,
+): Promise<Spawned> {
+  const { agent } = deps;
   const [command, ...lead] = deps.command;
   const child = spawn(command!, [...lead, ...agent.args(spec)], {
     cwd: deps.root,
-    env: { ...process.env, ...agent.env(spec) },
+    env: { ...childEnv(agent, process.env, deps.passEnv), ...agent.env(spec) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const stop = () => child.kill('SIGTERM');
@@ -148,7 +165,15 @@ export async function runTurn(
   const parse = agent.parser(deps.root);
   const lines = createInterface({ input: child.stdout });
   lines.on('line', (line) => {
-    for (const event of parse(line)) {
+    // A line the parser can't make sense of is skipped; throwing here would take the dev
+    // server down with it.
+    let events: AgentEvent[];
+    try {
+      events = parse(line);
+    } catch {
+      return;
+    }
+    for (const event of events) {
       if (event.type === 'session') conversation.session = event.id;
       else {
         if (event.type === 'done' || event.type === 'error') finished = true;
@@ -165,10 +190,50 @@ export async function runTurn(
     child.on('close', (code) => resolve(code));
   });
   deps.signal.removeEventListener('abort', stop);
-  deps.bridge.unregister(conversation.id);
-  for (const answer of conversation.pending.values())
-    answer({ id: '', content: 'The turn ended.', isError: true });
-  conversation.pending.clear();
+  return { exit, finished, stderr };
+}
+
+/** One message: runs the agent in the background until it answers, streaming what it does. */
+export async function runTurn(
+  conversation: Conversation,
+  text: string,
+  page: PageContext,
+  deps: RunDeps,
+) {
+  const { agent } = deps;
+  // Private to this user (mkdtemp makes it 0700): the run's files, such as Claude's MCP
+  // config with the bridge's token, which would otherwise show in the process list.
+  const dir = await mkdtemp(join(tmpdir(), 'klipp-run-'));
+  const spec: RunSpec = {
+    root: deps.root,
+    dir,
+    system: SYSTEM_PROMPT,
+    message: pageMessage(page, text),
+    ...(conversation.session ? { session: conversation.session } : {}),
+    newSession: randomUUID(),
+    mcpUrl: deps.bridge.url(conversation.id),
+    mcpToken: deps.bridge.token,
+    ...(deps.model ? { model: deps.model } : {}),
+    install: agent.install?.(deps.command[0]!) ?? [],
+  };
+  deps.bridge.register(conversation.id, (name, input) =>
+    askBrowser(conversation, deps, name, input),
+  );
+  let result: Spawned;
+  try {
+    for (const [name, content] of Object.entries(agent.files?.(spec) ?? {})) {
+      await writeFile(join(dir, name), content, { mode: 0o600 });
+    }
+    result = await spawnAgent(conversation, spec, deps);
+  } finally {
+    deps.bridge.unregister(conversation.id);
+    await rm(dir, { recursive: true, force: true });
+    for (const answer of conversation.pending.values())
+      answer({ id: '', content: 'The turn ended.', isError: true });
+    conversation.pending.clear();
+    conversation.proposals.clear();
+  }
+  const { exit, finished, stderr } = result;
   if (!finished && !deps.signal.aborted) {
     const detail = stderr.trim().split('\n').slice(-3).join(' ').slice(0, 400);
     deps.emit({

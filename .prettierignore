@@ -3,3 +3,4 @@ examples/*/dist/
 test-results/
 playwright-report/
 package-lock.json
+coverage/

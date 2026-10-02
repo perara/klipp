@@ -6,7 +6,7 @@ import { stamp, type StampContext } from './stamp.js';
 const ctx = (overrides: Partial<StampContext> = {}): StampContext => ({
   file: 'src/App.tsx',
   stampComponents: true,
-  isExternal: async (source) => !source.startsWith('.'),
+  isExternal: (source) => Promise.resolve(!source.startsWith('.')),
   ...overrides,
 });
 
@@ -120,8 +120,23 @@ describe('stamp', () => {
     expect(result?.map.mappings.length).toBeGreaterThan(0);
   });
 
-  it('returns nothing for code without JSX or code that does not parse', async () => {
-    expect(await run('export const x = 1;')).toBeUndefined();
-    expect(await run('export const x = <div>;')).toBeUndefined();
+  it('returns nothing for code without JSX, and says so for code that does not parse', async () => {
+    const warnings: string[] = [];
+    const warn = (message: string) => warnings.push(message);
+    expect(await run('export const x = 1;', { warn })).toBeUndefined();
+    expect(await run('export const x = <div>;', { warn })).toBeUndefined();
+    expect(warnings).toEqual([expect.stringMatching(/^src\/App\.tsx was left without Klipp IDs/)]);
+  });
+
+  it('reads decorators and import attributes, old and new', async () => {
+    const code = [
+      "import data from './data.json' with { type: 'json' };",
+      "import old from './old.json' assert { type: 'json' };",
+      '@observer',
+      'export class Panel extends Component {',
+      '  render() { return <div>{data.x}{old.y}</div>; }',
+      '}',
+    ].join('\n');
+    expect((await run(code))?.code).toMatch(/<div data-klipp="[0-9a-z]{8}">\{data\.x\}/);
   });
 });

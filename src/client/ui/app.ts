@@ -1,4 +1,4 @@
-import { HOST_ATTR } from '../../shared/id.js';
+import { HOST_ATTR, parseId } from '../../shared/id.js';
 import type { KlippManifest } from '../../shared/manifest.js';
 import type {
   AgentId,
@@ -15,7 +15,6 @@ import { loadManifest } from '../manifest.js';
 import { elementFacts, issueFooter } from '../report.js';
 import { ChatView, type Reply, type TicketCard } from './chat.js';
 import type { Ticket } from '../../shared/ticket.js';
-import { ticketBody } from '../../shared/ticket.js';
 import { adoptStyles, h } from './dom.js';
 import { Figure } from './figure.js';
 import { Overlay } from './overlay.js';
@@ -30,6 +29,8 @@ export interface KlippApp {
   pick(prompt?: string): Promise<Picked | undefined>;
   /** Opens the chat on the element a Klipp ID names, waiting for it to render. */
   reveal(id: string): Promise<void>;
+  /** Opens the chat with a message from Klipp. */
+  notify(text: string, sad?: boolean): void;
   showFigure(): void;
 }
 
@@ -74,19 +75,36 @@ const ISOLATED_EVENTS = [
   'keypress',
   'beforeinput',
   'input',
+  'compositionstart',
+  'compositionupdate',
+  'compositionend',
   'paste',
   'copy',
   'cut',
+  'select',
   'pointerdown',
+  'pointermove',
   'pointerup',
+  'pointercancel',
+  'pointerover',
+  'pointerout',
   'mousedown',
+  'mousemove',
   'mouseup',
+  'mouseover',
+  'mouseout',
   'click',
+  'auxclick',
   'dblclick',
   'contextmenu',
   'touchstart',
+  'touchmove',
   'touchend',
+  'touchcancel',
   'wheel',
+  'dragstart',
+  'dragover',
+  'drop',
   'focusin',
   'focusout',
 ] as const;
@@ -120,6 +138,8 @@ function mount(config: RuntimeConfig, chat: ChatView, figure: Figure) {
   // What happens in Klipp stays in Klipp. Events from inside a shadow root reach the page
   // looking as if they came from <klipp-root>, so a page's "is the user typing?" check fails:
   // Backspace in the chat would undo a drawing, a press on the glass would close a popover.
+  // They stop here, before they bubble out; a page listening on window or document in the
+  // capture phase still sees them, as it sees everything.
   for (const type of ISOLATED_EVENTS)
     layer.addEventListener(type, (event) => event.stopPropagation());
   shadow.append(layer);
@@ -140,6 +160,8 @@ export function createApp(config: RuntimeConfig): KlippApp {
   let pendingCard: TicketCard | undefined;
   /** What the user typed instead of answering the pending card. */
   let typedInstead = '';
+  /** The agent asked the user to point, and is waiting. */
+  let pickingForAgent = false;
   let agent: AgentId = 'claude';
   let agents: AgentInfo[] = [];
   let agentsLoaded: Promise<void> | undefined;
@@ -161,7 +183,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
   const overlay = new Overlay(ui.layer);
 
   const probe: Probe = {
-    hitTest(x, y) {
+    hitTest: (x, y) => {
       ui.host.classList.add('probing');
       try {
         return document.elementFromPoint(x, y);
@@ -276,21 +298,24 @@ export function createApp(config: RuntimeConfig): KlippApp {
   }
 
   /** Answers a tool call that needs the page or the user, while the agent waits for it. */
-  async function runTool(call: ClientToolCall): Promise<ClientToolResult> {
+  async function runTool(call: ClientToolCall, conversation: string): Promise<ClientToolResult> {
     const { id, input } = call;
+    const text = (value: unknown) => (typeof value === 'string' ? value : '');
     if (call.name === 'point_at_element') {
-      chat.reply(String(input.prompt));
-      const picked = await pick(String(input.prompt));
+      const prompt = text(input.prompt);
+      chat.reply(prompt);
+      pickingForAgent = true;
+      const picked = await pick(prompt).finally(() => (pickingForAgent = false));
       if (!picked) return { id, content: 'The user cancelled instead of pointing.' };
       focusOn(picked, false);
       return { id, content: JSON.stringify(await contextOf(picked)) };
     }
     if (call.name === 'inspect_element') {
-      const element = resolve(String(input.id)).element;
+      const element = resolve(text(input.id)).element;
       if (!element) {
         return {
           id,
-          content: `No element with the ID ${String(input.id)} is on the page.`,
+          content: `No element with the ID ${text(input.id)} is on the page.`,
           isError: true,
         };
       }
@@ -299,27 +324,25 @@ export function createApp(config: RuntimeConfig): KlippApp {
         content: JSON.stringify(await contextOf({ element, point: centerOf(element) })),
       };
     }
-    // The server checked the ticket against its type before handing it over.
+    // The server checked the ticket against its type before handing it over, and files it
+    // from its own copy: the page adds only the details shown here.
     const ticket = input as unknown as Ticket;
-    const card = (pendingCard = chat.ticket(ticket));
+    const details = footer();
+    const card = (pendingCard = chat.ticket(ticket, details));
     figure.mood = 'idle';
     const decision = await card.decision;
     pendingCard = undefined;
     if (decision === 'superseded') {
       return { id, content: `The user didn't file it, and wrote instead: ${typedInstead}` };
     }
+    if (decision === 'expired') return { id, content: 'The turn ended.', isError: true };
     if (decision === 'decline') {
       card.declined();
       return { id, content: 'The user decided not to file it.' };
     }
     card.filing();
     try {
-      const body = `${ticketBody(ticket)}\n\n${footer()}`;
-      const url = await fileIssue(config.endpoint, {
-        title: ticket.title,
-        body,
-        type: ticket.type,
-      });
+      const url = await fileIssue(config.endpoint, { conversation, proposal: id, footer: details });
       card.filed(url);
       return { id, content: `Filed: ${url}` };
     } catch (error) {
@@ -329,9 +352,15 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
   }
 
+  /** What the agent was waiting on when its turn ended can't reach it any more. */
+  function retireToolCalls() {
+    pendingCard?.expire();
+    pendingCard = undefined;
+    if (pickingForAgent) cancelPicking?.();
+  }
+
   /** One message: the agent runs in the background and its work streams in. */
   async function exchange(text: string, page: PageContext): Promise<void> {
-    busy = true;
     figure.mood = 'thinking';
     let reply: Reply | undefined;
     let failed = false;
@@ -351,10 +380,17 @@ export function createApp(config: RuntimeConfig): KlippApp {
         } else if (event.type === 'client_tool') {
           reply = undefined;
           const answering = conversation!;
-          void runTool(event.call).then((result) => {
-            figure.mood = 'thinking';
-            return answerTool(config.endpoint, { conversation: answering, ...result });
-          });
+          const { call } = event;
+          void runTool(call, answering)
+            .catch((error: unknown): ClientToolResult => ({
+              id: call.id,
+              content: `The page couldn't do that: ${error instanceof Error ? error.message : String(error)}`,
+              isError: true,
+            }))
+            .then((result) => {
+              figure.mood = 'thinking';
+              return answerTool(config.endpoint, { conversation: answering, ...result });
+            });
         } else if (event.type === 'error') {
           failed = true;
           reply = undefined;
@@ -371,7 +407,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
             : String(error),
       );
     } finally {
-      busy = false;
+      retireToolCalls();
     }
     figure.mood = failed ? 'sad' : 'idle';
   }
@@ -385,13 +421,22 @@ export function createApp(config: RuntimeConfig): KlippApp {
       return true;
     }
     if (busy) return false;
+    // Taken now, not after the element's context is ready, so a second message waits.
+    busy = true;
     chat.user(text);
     const carried = attached ? subject : undefined;
     attached = false;
     chat.attach(undefined);
     void (async () => {
-      const element = carried ? await contextOf(carried) : undefined;
-      await exchange(text, pageContext(config.keepQuery, element));
+      try {
+        const element = carried ? await contextOf(carried) : undefined;
+        await exchange(text, pageContext(config.keepQuery, element));
+      } catch (error) {
+        chat.reply(error instanceof Error ? error.message : String(error));
+        figure.mood = 'sad';
+      } finally {
+        busy = false;
+      }
     })();
     return true;
   }
@@ -413,12 +458,18 @@ export function createApp(config: RuntimeConfig): KlippApp {
         chat.showAgents(agents, agent);
         if (!usable.length) {
           chat.reply(
-            'I need **Claude Code** (`claude`) or **Codex** (`codex`) on this machine, logged in. Install one and restart the dev server.',
+            answer.problem ??
+              'I need **Claude Code** (`claude`) or **Codex** (`codex`) on this machine, logged in. Install one and restart the dev server.',
           );
           figure.mood = 'sad';
         }
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        // No chat server is fine (a static deploy still points and links); a refusal says why.
+        if (error instanceof Unreachable || !(error instanceof Error)) return;
+        chat.reply(error.message);
+        figure.mood = 'sad';
+      });
     return agentsLoaded;
   }
 
@@ -461,9 +512,15 @@ export function createApp(config: RuntimeConfig): KlippApp {
   async function reveal(id: string) {
     greeted = true;
     open(false);
+    // The ID comes from a link anyone could craft: it is checked before it is shown.
+    if (!parseId(id)) {
+      chat.reply("That link doesn't name an element I know how to find.");
+      figure.mood = 'sad';
+      return;
+    }
     const element = await waitFor(() => resolve(id).element, 10_000);
     if (!element) {
-      chat.reply(`I couldn't find \`${id}\` on this page.`);
+      chat.reply(`I couldn't find \`${id.trim()}\` on this page.`);
       figure.mood = 'sad';
       return;
     }
@@ -478,16 +535,13 @@ export function createApp(config: RuntimeConfig): KlippApp {
     );
   }
 
-  window.addEventListener(
-    'keydown',
-    (event) => {
-      if (event.key !== 'Escape' || mode !== 'open') return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      close();
-    },
-    true,
-  );
+  // Escape inside Klipp closes it; Escape on the page stays the page's. (Picking, which covers
+  // the page, takes Escape wherever it is pressed.)
+  ui.layer.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || mode !== 'open' || event.isComposing) return;
+    event.preventDefault();
+    close();
+  });
   figure.button.addEventListener('click', () => {
     if (mode === 'picking') cancelPicking?.();
     else if (mode === 'open') close();
@@ -501,6 +555,12 @@ export function createApp(config: RuntimeConfig): KlippApp {
     close,
     pick,
     reveal,
+    notify(text, sad = false) {
+      greeted = true;
+      open(false);
+      chat.reply(text);
+      figure.mood = sad ? 'sad' : 'idle';
+    },
     showFigure() {
       if (!figure.button.hidden) return;
       figure.button.hidden = false;

@@ -38,6 +38,6 @@ export function adoptStyles(root: ShadowRoot, css: string) {
     sheet.replaceSync(css);
     root.adoptedStyleSheets = [sheet];
   } else {
-    (root as ShadowRoot).append(h('style', {}, css));
+    root.append(h('style', {}, css));
   }
 }

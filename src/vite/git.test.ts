@@ -12,6 +12,8 @@ describe('normalizeRemote', () => {
       'https://github.com/perara/klipp',
     ],
     ['https://github.com/perara/klipp/', 'https://github.com/perara/klipp'],
+    ['https://git.example.com:8443/team/app.git', 'https://git.example.com:8443/team/app'],
+    ['ssh://git@git.example.com:2222/team/app.git', 'https://git.example.com/team/app'],
   ])('%s → %s', (remote, expected) => {
     expect(normalizeRemote(remote)).toBe(expected);
   });

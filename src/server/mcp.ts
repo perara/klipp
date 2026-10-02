@@ -41,13 +41,29 @@ export class McpBridge {
     private readonly version = '0',
   ) {}
 
-  async start(): Promise<void> {
-    if (this.server) return;
-    const server = createServer((req, res) => void this.handle(req, res));
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-    server.unref();
-    this.server = server;
-    this.port = (server.address() as AddressInfo).port;
+  private starting: Promise<void> | undefined;
+
+  /** Starts listening, once; a failure is reported and the next call tries again. */
+  start(): Promise<void> {
+    this.starting ??= new Promise<void>((done, fail) => {
+      const server = createServer((req, res) => {
+        this.handle(req, res).catch(() => {
+          if (!res.headersSent) reply(res, 500);
+          else res.end();
+        });
+      });
+      server.once('error', (error) => {
+        this.starting = undefined;
+        fail(error);
+      });
+      server.listen(0, '127.0.0.1', () => {
+        server.unref();
+        this.server = server;
+        this.port = (server.address() as AddressInfo).port;
+        done();
+      });
+    });
+    return this.starting;
   }
 
   url(conversation: string): string {
@@ -64,7 +80,9 @@ export class McpBridge {
 
   close() {
     this.server?.close();
+    this.server?.closeAllConnections();
     this.server = undefined;
+    this.starting = undefined;
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse) {
@@ -83,7 +101,7 @@ export class McpBridge {
         error: { code: -32700, message: 'Parse error' },
       });
     }
-    const messages = Array.isArray(body) ? body : [body];
+    const messages: unknown[] = Array.isArray(body) ? body : [body];
     const answers = (await Promise.all(messages.map((m) => this.answer(conversation, m)))).filter(
       (a): a is object => a !== undefined,
     );
@@ -92,7 +110,11 @@ export class McpBridge {
   }
 
   /** The response to one JSON-RPC message; undefined for notifications. */
-  private async answer(conversation: string, message: Message): Promise<object | undefined> {
+  private async answer(conversation: string, value: unknown): Promise<object | undefined> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } };
+    }
+    const message = value as Message;
     if (message.id === undefined || message.id === null) return undefined;
     const ok = (result: object) => ({ jsonrpc: '2.0', id: message.id, result });
     const fail = (code: number, text: string) => ({
@@ -116,7 +138,7 @@ export class McpBridge {
         return ok({ tools: this.tools });
       case 'tools/call': {
         const handler = this.handlers.get(conversation);
-        const name = String(message.params?.name ?? '');
+        const name = typeof message.params?.name === 'string' ? message.params.name : '';
         if (!handler)
           return ok({
             content: [{ type: 'text', text: 'The page is no longer open.' }],
@@ -124,7 +146,11 @@ export class McpBridge {
           });
         if (!this.tools.some((tool) => tool.name === name))
           return fail(-32602, `Unknown tool ${name}`);
-        const args = (message.params?.arguments ?? {}) as Record<string, unknown>;
+        const given = message.params?.arguments;
+        const args =
+          typeof given === 'object' && given !== null && !Array.isArray(given)
+            ? (given as Record<string, unknown>)
+            : {};
         try {
           const result = await handler(name, args);
           return ok({

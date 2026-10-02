@@ -7,14 +7,19 @@ function push(list: string[], line: string) {
   if (list.length > KEEP) list.shift();
 }
 
+/**
+ * Errors by name and message, and text and numbers as they are. Objects are named, not
+ * opened: `console.error('Sign-in failed', { email, password })` must not send the password.
+ */
 function describe(value: unknown): string {
   if (value instanceof Error) return `${value.name}: ${value.message}`;
   if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
+  if (typeof value === 'function') return '[function]';
+  if (value === null || typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return `[array(${value.length})]`;
+  if (typeof Element !== 'undefined' && value instanceof Element) return `<${value.localName}>`;
+  const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
+  return `[${typeof name === 'string' && name ? name : 'object'}]`;
 }
 
 /** Path and query keys of a request, without values. */

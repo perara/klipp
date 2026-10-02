@@ -1,5 +1,5 @@
 import type { AgentId, AgentInfo } from '../../shared/protocol.js';
-import { ticketBody, TYPE_NAMES, type Ticket } from '../../shared/ticket.js';
+import { ticketText, TYPE_NAMES, type Ticket } from '../../shared/ticket.js';
 import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 
@@ -32,9 +32,12 @@ export class Reply {
   }
 }
 
-export type IssueDecision = 'file' | 'decline' | 'superseded';
+export type IssueDecision = 'file' | 'decline' | 'superseded' | 'expired';
 
-/** A ticket in the chat, waiting for the user's decision. */
+/**
+ * A ticket in the chat, waiting for the user's decision. It shows all of what would be filed:
+ * the ticket in full, and the page details Klipp adds under it.
+ */
 export class TicketCard {
   readonly decision: Promise<IssueDecision>;
   private decide!: (decision: IssueDecision) => void;
@@ -44,6 +47,7 @@ export class TicketCard {
   constructor(
     readonly element: HTMLElement,
     ticket: Ticket,
+    footer: string,
   ) {
     this.decision = new Promise((resolve) => (this.decide = resolve));
     this.actions = h(
@@ -69,12 +73,12 @@ export class TicketCard {
         ticket.severity && h('span', { class: 'tag' }, ticket.severity),
       ),
       h('div', { class: 'card-title' }, ticket.title),
-      h('div', { class: 'card-summary' }, ticket.summary),
+      h('div', { class: 'card-body' }, renderMarkdown(ticketText(ticket))),
       h(
         'details',
         {},
-        h('summary', {}, 'Show the ticket'),
-        h('div', { class: 'card-body' }, renderMarkdown(ticketBody(ticket))),
+        h('summary', {}, 'Page details added to it'),
+        h('pre', { class: 'card-footer' }, footer),
       ),
       this.actions,
       this.status,
@@ -87,15 +91,21 @@ export class TicketCard {
     this.status.textContent = 'Left for later.';
   }
 
+  /** The turn ended while this was waiting; filing it now would reach no one. */
+  expire() {
+    this.decide('expired');
+    this.status.textContent = 'Klipp stopped waiting for this one. Ask again to file it.';
+  }
+
   filing() {
     this.status.textContent = 'Filing…';
   }
 
   filed(url: string) {
-    this.status.replaceChildren(
-      'Filed: ',
-      h('a', { href: url, target: '_blank', rel: 'noreferrer' }, url),
-    );
+    const link = /^https:\/\//.test(url)
+      ? h('a', { href: url, target: '_blank', rel: 'noreferrer' }, url)
+      : url;
+    this.status.replaceChildren('Filed: ', link);
   }
 
   failed(message: string) {
@@ -244,9 +254,9 @@ export class ChatView {
     this.add(h('div', { class: 'activity' }, label));
   }
 
-  ticket(ticket: Ticket): TicketCard {
+  ticket(ticket: Ticket, footer: string): TicketCard {
     // Built before it is added, so the whole card scrolls into view.
-    const card = new TicketCard(h('div', { class: 'msg klipp card' }), ticket);
+    const card = new TicketCard(h('div', { class: 'msg klipp card' }), ticket, footer);
     this.add(card.element);
     return card;
   }
