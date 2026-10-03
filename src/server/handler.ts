@@ -16,6 +16,7 @@ import { AGENTS, onPath } from './agents.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
+import { Identity, type IdentityOptions } from './identity.js';
 import { McpBridge } from './mcp.js';
 import { PAGE_TOOLS } from './prompt.js';
 
@@ -49,8 +50,28 @@ export interface KlippServerOptions {
   pairingCode?: string;
   /** Agent runs at once, across every conversation. Default: 4. */
   maxRuns?: number;
+  /**
+   * Behind a sign-in proxy: the header it names the user in, and who may chat. The chat then
+   * answers them instead of only localhost; each conversation is theirs alone, and tickets say
+   * who reported them.
+   */
+  identity?: IdentityOptions | undefined;
+  /** Told about each turn and each filed ticket: metadata only, never what anyone typed. */
+  log?: ((entry: KlippLogEntry) => void) | undefined;
   version?: string;
 }
+
+export type KlippLogEntry =
+  | {
+      event: 'turn';
+      agent: AgentId;
+      user?: string | undefined;
+      conversation: string;
+      ms: number;
+      outcome: 'answered' | 'failed' | 'stopped';
+    }
+  | { event: 'filed'; user?: string | undefined; url: string }
+  | { event: 'limited'; user: string };
 
 export interface KlippMiddleware {
   (req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void): void;
@@ -93,8 +114,16 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   const bridge = new McpBridge(PAGE_TOOLS, options.version);
   const conversations = new Conversations();
   const runs = new Set<AbortController>();
-  const pairing = options.allowRemote ? new Pairing(options.pairingCode) : undefined;
+  const identity = options.identity ? new Identity(options.identity) : undefined;
+  // Behind a sign-in proxy the proxy decides who gets in; pairing is for a dev server.
+  const pairing = options.allowRemote && !identity ? new Pairing(options.pairingCode) : undefined;
   const maxRuns = options.maxRuns ?? 4;
+  const log = options.log ?? (() => undefined);
+  /** The signed-in user, behind a sign-in proxy; checked by `refusal` before any route runs. */
+  const userOf = (req: IncomingMessage): string | undefined => {
+    const who = identity?.userOf(req);
+    return who && 'user' in who ? who.user : undefined;
+  };
   const command = (agent: AgentId) => options.commands?.[agent] ?? [AGENTS[agent].binary];
   const windows = process.platform === 'win32' && !options.commands;
 
@@ -134,15 +163,25 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
       return json(res, 400, { error: 'A chat message needs an agent, text and the page.' });
     }
     await bridge.start();
+    const user = userOf(req);
     const conversation = conversations.get(
       typeof request.conversation === 'string' ? request.conversation : undefined,
       agent,
+      user,
     );
     if (conversation.busy) return json(res, 409, { error: 'Klipp is still answering.' });
     if (conversations.running() >= maxRuns) {
       return json(res, 429, { error: 'Klipp is answering too many conversations at once.' });
     }
+    if (identity && user && !identity.allowMessage(user)) {
+      log({ event: 'limited', user });
+      return json(res, 429, {
+        error: "You've sent Klipp a lot of messages in the last hour. Try again a little later.",
+      });
+    }
     conversation.busy = true;
+    const started = Date.now();
+    let outcome: 'answered' | 'failed' | 'stopped' = 'answered';
     const aborted = new AbortController();
     runs.add(aborted);
     res.on('close', () => aborted.abort());
@@ -152,6 +191,7 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Accel-Buffering', 'no');
       const emit = (event: ChatEvent) => {
+        if (event.type === 'error') outcome = 'failed';
         if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
       };
       emit({ type: 'conversation', id: conversation.id });
@@ -160,7 +200,7 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
         const name = AGENTS[agent].binary;
         return emit({
           type: 'error',
-          message: `I can't find \`${name}\` on this machine. Install it and log in, then restart the dev server.`,
+          message: `I can't find \`${name}\` on this machine. Install it and log in, then restart the server.`,
         });
       }
       await runTurn(conversation, request.text, request.page, {
@@ -174,18 +214,22 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
         signal: aborted.signal,
       });
     } catch (error) {
+      outcome = 'failed';
       const message = error instanceof Error ? error.message : String(error);
       if (!res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
     } finally {
       runs.delete(aborted);
       conversation.busy = false;
       res.end();
+      if (aborted.signal.aborted) outcome = 'stopped';
+      const ms = Date.now() - started;
+      log({ event: 'turn', agent, user, conversation: conversation.id, ms, outcome });
     }
   }
 
   async function toolResult(req: IncomingMessage, res: ServerResponse) {
     const result = (await readJson(req)) as Partial<ToolResultRequest>;
-    const conversation = conversations.find(String(result.conversation));
+    const conversation = conversations.find(String(result.conversation), userOf(req));
     const delivered =
       conversation !== undefined &&
       typeof result.content === 'string' &&
@@ -200,7 +244,8 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   /** Files a ticket the agent proposed and the user is looking at, once. */
   async function issue(req: IncomingMessage, res: ServerResponse) {
     const request = (await readJson(req)) as Partial<IssueRequest>;
-    const conversation = conversations.find(String(request.conversation));
+    const user = userOf(req);
+    const conversation = conversations.find(String(request.conversation), user);
     const proposal = String(request.proposal);
     const ticket = conversation?.proposals.get(proposal);
     if (!conversation || !ticket) {
@@ -213,11 +258,13 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     }
     conversation.proposals.delete(proposal);
     try {
-      const body = `${ticketBody(ticket)}\n\n${request.footer}`;
+      // Who reported it comes from the proxy, never from the page.
+      const reporter = user ? `\n\nReported by ${user.replace(/[\\`*_[\]()<>#|]/g, '\\$&')}.` : '';
+      const body = `${ticketBody(ticket)}\n\n${request.footer}${reporter}`;
       const draft = { title: ticket.title, body, type: ticket.type };
-      json(res, 200, {
-        url: await fileIssue(draft, labelsFor(ticket.type)),
-      } satisfies IssueResponse);
+      const url = await fileIssue(draft, labelsFor(ticket.type));
+      log({ event: 'filed', user, url });
+      json(res, 200, { url } satisfies IssueResponse);
     } catch (error) {
       // Still there to file once whatever went wrong is fixed.
       if (conversation.pending.has(proposal)) conversation.proposals.set(proposal, ticket);
@@ -250,6 +297,10 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   /** Why a request may not use the chat, or undefined when it may. */
   function refusal(req: IncomingMessage): [number, string] | undefined {
     if (!fromKlipp(req)) return [403, 'Not allowed.'];
+    if (identity) {
+      const who = identity.userOf(req);
+      return 'refused' in who ? who.refused : undefined;
+    }
     if (isLocal(req) || pairing?.paired(req)) return undefined;
     if (!pairing) {
       return [

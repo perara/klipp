@@ -213,6 +213,37 @@ entirely, register from a dynamic import behind `if (import.meta.env.DEV)`.
 
 [SECURITY.md](SECURITY.md) has the details, and what Klipp does not protect against.
 
+## On a shared server
+
+Under the dev server, Klipp's chat answers only the developer's own browser. For a shared test
+environment, where testers sign in through a proxy, run the chat as its own server and route the
+app's `/@klipp/` to it:
+
+```bash
+KLIPP=1 vite build   # the app, with Klipp's IDs and runtime
+KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_AGENT=claude \
+  KLIPP_GITHUB_TOKEN=github_pat_… npx klipp serve
+```
+
+- **Who:** the proxy names the signed-in user in a header it sets itself (and removes from what
+  browsers send); `KLIPP_IDENTITY_HEADER` says which. Requests without it are refused.
+  `KLIPP_ALLOW` limits the chat to a comma-separated list of users; the default, `*`, is anyone
+  signed in. Each user's conversations are theirs alone, they may send `KLIPP_MESSAGES_PER_HOUR`
+  messages an hour (default 30), and their tickets say who reported them.
+- **What the agent reads:** `KLIPP_ROOT`, the source at the deployed commit. Bake it into the
+  server's image, so it always matches what testers see. Anyone who can chat can ask about
+  any of it.
+- **Which agent:** Claude needs no operating-system sandbox: `--restricted` with only Read, Grep
+  and Glob keeps it to `KLIPP_ROOT`, so it runs in an ordinary locked-down container. Codex
+  runs shell commands, and its sandbox (bubblewrap) needs the container to allow unprivileged
+  user namespaces: a looser seccomp profile, and on hosts that restrict user namespaces through
+  AppArmor (Ubuntu 24.04 and later), a looser AppArmor profile too. Prefer Claude there.
+- **Running it:** `klipp serve` refuses to listen beyond localhost without
+  `KLIPP_IDENTITY_HEADER`, answers `GET /healthz` for health checks, stops every run on
+  `SIGTERM`, and logs one JSON line per turn and per filed ticket: who, which agent, how long,
+  never what anyone typed. `klipp serve --help` lists its settings; `klipp/server` has the same
+  as `serve()` and `createKlippMiddleware()`.
+
 ## Options
 
 | Option                    | Default                           | What it does                                                           |

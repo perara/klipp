@@ -25,6 +25,9 @@
   "license": "MIT",
   "author": "Per-Arne Andersen",
   "type": "module",
+  "bin": {
+    "klipp": "./dist/cli.js"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -40,6 +43,10 @@
     "./canvas": {
       "types": "./dist/canvas/index.d.ts",
       "import": "./dist/canvas/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
     },
     "./package.json": "./package.json"
   },

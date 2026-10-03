@@ -65,9 +65,17 @@ What it does to keep that safe:
 - **No markup injection.** Agent output is rendered as DOM nodes, never through `innerHTML`, and
   only `http(s)` links are made clickable. Links into Klipp are checked before they are shown.
 
+- **Behind a sign-in proxy** (`klipp serve` with `KLIPP_IDENTITY_HEADER`): the chat trusts the
+  header the proxy sets, so the proxy must set it on every request and drop any value a browser
+  sends, and Klipp's server must be reachable only through the proxy. Each conversation belongs
+  to the user who started it, messages are limited per user per hour, tickets name their
+  reporter, and the logs carry no message text. `klipp serve` won't listen beyond localhost
+  without an identity header.
+
 What it can't protect against:
 
 - anyone who can already run code on your machine, as you;
-- anyone you pair with `chat.allowRemote`, who can use the agent as you;
+- anyone you pair with `chat.allowRemote`, or let in behind a sign-in proxy, who can use the
+  agent as you, and read through it whatever it can read;
 - a page script in your own app, which runs in the same origin as Klipp;
 - what the agent's model does with what it can read: with Codex, every file in the repository.

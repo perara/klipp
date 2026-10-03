@@ -7,6 +7,15 @@ behaviour or options.
 
 ## [Unreleased]
 
+### Added
+
+- `klipp serve` and `klipp/server`: the chat as its own server, for a shared test environment
+  behind a sign-in proxy. The proxy names the user in a header (`KLIPP_IDENTITY_HEADER`), and
+  `KLIPP_ALLOW` can limit who may chat. Each conversation belongs to its user, messages are
+  limited per user per hour, tickets say who reported them, and one JSON log line per turn and
+  per ticket carries no message text. `GET /healthz` answers health checks, and `SIGTERM` stops
+  every run. It won't listen beyond localhost without an identity header.
+
 ## [0.6.1] - 2026-10-02
 
 ### Fixed

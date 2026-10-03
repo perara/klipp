@@ -22,6 +22,8 @@ const IDLE_MS = 2 * 60 * 60 * 1000;
 export interface Conversation {
   id: string;
   agent: AgentId;
+  /** Behind a sign-in proxy, the user it belongs to; no one else can carry it on. */
+  owner?: string | undefined;
   /** The agent's own session id once its first run has started. */
   session?: string;
   /** A run is in progress. */
@@ -36,11 +38,11 @@ export interface Conversation {
 export class Conversations {
   private readonly all = new Map<string, Conversation>();
 
-  get(id: string | undefined, agent: AgentId): Conversation {
+  get(id: string | undefined, agent: AgentId, owner?: string): Conversation {
     const now = Date.now();
     for (const [key, c] of this.all) if (now - c.touched > IDLE_MS && !c.busy) this.all.delete(key);
     const found = id ? this.all.get(id) : undefined;
-    if (found && found.agent === agent) {
+    if (found && found.agent === agent && found.owner === owner) {
       found.touched = now;
       return found;
     }
@@ -53,6 +55,7 @@ export class Conversations {
     const created: Conversation = {
       id: randomUUID(),
       agent,
+      owner,
       busy: false,
       pending: new Map(),
       proposals: new Map(),
@@ -62,8 +65,10 @@ export class Conversations {
     return created;
   }
 
-  find(id: string): Conversation | undefined {
-    return this.all.get(id);
+  /** A conversation by id, when it belongs to `owner` (no one, without a sign-in proxy). */
+  find(id: string, owner?: string): Conversation | undefined {
+    const found = this.all.get(id);
+    return found?.owner === owner ? found : undefined;
   }
 
   /** How many agent runs are going on. */
