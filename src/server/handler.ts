@@ -16,6 +16,7 @@ import { AGENTS } from './agents.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
+import { json, readJson } from './http.js';
 import { Identity, type IdentityOptions } from './identity.js';
 import { McpBridge } from './mcp.js';
 import { localRunner, WINDOWS, type Runner } from './runner.js';
@@ -83,28 +84,6 @@ export interface KlippMiddleware {
 
 /** GitHub refuses issue bodies over 65,536 characters; the ticket needs room too. */
 const MAX_FOOTER = 16_000;
-
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'no-store');
-  res.end(JSON.stringify(body));
-}
-
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > 1_000_000) throw new Error('too large');
-    chunks.push(chunk as Buffer);
-  }
-  const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Expected a JSON object.');
-  }
-  return value as Record<string, unknown>;
-}
 
 /** Connect-style middleware: the chat, page-tool answers, issue filing, and (in development) the manifest. */
 export function createKlippMiddleware(options: KlippServerOptions): KlippMiddleware {

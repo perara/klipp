@@ -1,0 +1,105 @@
+import { chmodSync, mkdirSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
+import { json } from '../server/http.js';
+import { McpBridge } from '../server/mcp.js';
+import { localRunner } from '../server/runner.js';
+import type { AgentId } from '../shared/protocol.js';
+import { RunLog } from './runlog.js';
+import { Tokens } from './tokens.js';
+import { createV1 } from './v1.js';
+
+export interface BoxOptions {
+  /** The repository the agents read, read-only. */
+  root: string;
+  /** Logins, tokens and run logs. Created 0700. */
+  data: string;
+  port: number;
+  /** Default: `127.0.0.1`. */
+  host?: string | undefined;
+  /** `name=token,…`: tokens from the environment, such as Klipp's (`KLIPP_BOX_TOKENS`). */
+  tokens?: string | undefined;
+  /** Runs at once. Default: 2. */
+  maxRuns?: number | undefined;
+  /** The model when a run names none. */
+  model?: string | undefined;
+  /** Replace an agent's command and leading arguments, as the tests do. */
+  commands?: Partial<Record<AgentId, string[]>> | undefined;
+  /** How often an idle stream gets an empty line. Default: 15 s. */
+  keepAliveMs?: number | undefined;
+  /** How long a tool call may wait for its answer. Default: 30 min. */
+  toolTimeoutMs?: number | undefined;
+  /** Where the built web UI is. Default: this package's `dist`. */
+  assets?: string | undefined;
+  version?: string | undefined;
+}
+
+export interface BoxServer {
+  readonly url: string;
+  /** Stops every run, then the server. */
+  close(): Promise<void>;
+}
+
+/** The AI box: Klipp's agents behind box protocol v1, and (Task 8–9) a web UI to set them up. */
+export async function startBox(options: BoxOptions): Promise<BoxServer> {
+  mkdirSync(options.data, { recursive: true, mode: 0o700 });
+  chmodSync(options.data, 0o700);
+  // Every CLI the box starts keeps its login here, apart from the user's own.
+  const env = {
+    ...process.env,
+    CLAUDE_CONFIG_DIR: join(options.data, 'claude'),
+    CODEX_HOME: join(options.data, 'codex'),
+  };
+  for (const dir of [env.CLAUDE_CONFIG_DIR, env.CODEX_HOME])
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const bridge = new McpBridge(options.version);
+  const runner = localRunner({ root: options.root, bridge, env, commands: options.commands });
+  const tokens = new Tokens(options.data, options.tokens);
+  const log = new RunLog(options.data);
+  const v1 = createV1({
+    runner,
+    problem: (agent) => runner.problem(agent),
+    tokens,
+    log,
+    maxRuns: options.maxRuns ?? 2,
+    model: options.model,
+    keepAliveMs: options.keepAliveMs ?? 15_000,
+    toolTimeoutMs: options.toolTimeoutMs ?? 30 * 60_000,
+  });
+
+  const server = createServer((req, res) => {
+    const path = (req.url ?? '').split('?', 1)[0]!;
+    const fail = (error: unknown) => {
+      if (res.headersSent) res.end();
+      else json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    };
+    if (req.method === 'GET' && path === '/healthz') {
+      res.setHeader('Content-Type', 'text/plain');
+      res.end('ok');
+      return;
+    }
+    if (path.startsWith('/v1/')) {
+      v1.handle(req, res, path).catch(fail);
+      return;
+    }
+    json(res, 404, { error: 'No such page.' });
+  });
+  await new Promise<void>((done, failed) => {
+    server.once('error', failed);
+    server.listen(options.port, options.host ?? '127.0.0.1', () => done());
+  });
+  const { port } = server.address() as AddressInfo;
+  const host = options.host ?? '127.0.0.1';
+  return {
+    url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
+    async close() {
+      v1.close();
+      bridge.close();
+      await new Promise<void>((done) => {
+        server.close(() => done());
+        server.closeAllConnections();
+      });
+    },
+  };
+}
