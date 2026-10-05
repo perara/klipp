@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { createServer, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,12 +39,44 @@ afterAll(async () => {
 });
 
 /** A stand-in box that answers every request the same way. */
-async function stub(answer: (res: ServerResponse) => void) {
-  const server = createServer((_req, res) => answer(res));
+async function stub(answer: (res: ServerResponse, req: IncomingMessage) => void) {
+  const server = createServer((req, res) => answer(res, req));
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   stubs.push(server);
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
+
+/**
+ * A stand-in box that streams `lines` and holds the stream open. `closed` settles when the
+ * client lets go of it, `answers` collects the tool answers it is sent (a 2xx one ends the run).
+ */
+async function holdingBox(lines: string, toolStatus = 204) {
+  const answers: Array<{ url: string; body: string }> = [];
+  let held: ServerResponse | undefined;
+  let release = () => {};
+  const closed = new Promise<void>((done) => (release = done));
+  const url = await stub((res, req) => {
+    if (!req.url?.includes('/tools/')) {
+      held = res;
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      res.write(lines);
+      res.on('close', release);
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk: Buffer) => (body += chunk.toString()));
+    req.on('end', () => {
+      answers.push({ url: req.url!, body });
+      res.statusCode = toolStatus;
+      res.end();
+      if (toolStatus < 300) held?.end('{"type":"done"}\n');
+    });
+  });
+  return { url, answers, closed };
+}
+
+const TOOL_CALL = '{"type":"run","id":"r"}\n{"type":"tool_call","id":"c","name":"p","input":{}}\n';
+const LOST = { type: 'error', message: 'Lost the AI box mid-answer.' };
 
 const ask = (question: string) => `<page_context>\n{}\n</page_context>\n\n${question}`;
 async function run(
@@ -52,6 +84,7 @@ async function run(
   question: string,
   onTool: (name: string) => Promise<McpResult> = () => Promise.resolve({ text: 'not now' }),
   token = TOKEN,
+  signal = new AbortController().signal,
 ) {
   const events: AgentEvent[] = [];
   await boxRunner({ url, token }).run(
@@ -61,7 +94,7 @@ async function run(
       message: ask(question),
       tools: [{ name: 'point_at_element', description: 'Point.', inputSchema: { type: 'object' } }],
     },
-    { onEvent: (e) => events.push(e), onTool, signal: new AbortController().signal },
+    { onEvent: (e) => events.push(e), onTool, signal },
   );
   return events;
 }
@@ -106,6 +139,88 @@ describe('boxRunner', () => {
       type: 'error',
       message: 'Lost the AI box mid-answer.',
     });
+  });
+
+  it('stops when the caller aborts: the box is let go, a late tool answer is not sent', async () => {
+    const held = await holdingBox(TOOL_CALL);
+    const abort = new AbortController();
+    let answer = (_: McpResult) => {};
+    let asked = () => {};
+    const toolAsked = new Promise<void>((done) => (asked = done));
+    const running = run(
+      held.url,
+      'hi',
+      () => {
+        asked();
+        return new Promise<McpResult>((done) => (answer = done));
+      },
+      TOKEN,
+      abort.signal,
+    );
+    await toolAsked;
+    abort.abort();
+    expect(await running).toEqual([]);
+    await held.closed;
+    answer({ text: 'too late' });
+    await new Promise((done) => setTimeout(done, 100));
+    expect(held.answers).toEqual([]);
+  });
+
+  it('says so, and lets the box go, when a tool answer cannot be delivered', async () => {
+    const held = await holdingBox(TOOL_CALL, 500);
+    expect(await run(held.url, 'hi')).toEqual([LOST]);
+    await held.closed;
+  });
+
+  it('tells the box when a tool fails', async () => {
+    const held = await holdingBox(TOOL_CALL);
+    const events = await run(held.url, 'hi', () => Promise.reject(new Error('The page is gone.')));
+    expect(events).toEqual([{ type: 'done' }]);
+    expect(held.answers.map((a) => JSON.parse(a.body) as unknown)).toEqual([
+      { content: 'The page is gone.', isError: true },
+    ]);
+  });
+
+  it('says so, and lets the box go, when a line is not JSON', async () => {
+    const held = await holdingBox('{"type":"run","id":"r"}\nnot json\n');
+    expect(await run(held.url, 'hi')).toEqual([LOST]);
+    await held.closed;
+  });
+
+  it('stops reading after the box says done', async () => {
+    const held = await holdingBox(
+      '{"type":"run","id":"r"}\n{"type":"done"}\n{"type":"text","delta":"x"}\n',
+    );
+    expect(await run(held.url, 'hi')).toEqual([{ type: 'done' }]);
+    await held.closed;
+  });
+
+  it('needs a token before it asks the box anything', async () => {
+    const calls: unknown[] = [];
+    const fetchSpy = ((...args: unknown[]) => calls.push(args)) as unknown as typeof fetch;
+    const runner = boxRunner({ url: box.url, token: '' }, fetchSpy);
+    const message = 'Klipp has no token for the AI box: set KLIPP_BOX_TOKEN.';
+    expect(await runner.problem('claude')).toBe(message);
+    const events: AgentEvent[] = [];
+    await runner.run(
+      { agent: 'claude', system: 'S', message: 'M', tools: [] },
+      {
+        onEvent: (e) => events.push(e),
+        onTool: () => Promise.resolve({ text: '' }),
+        signal: new AbortController().signal,
+      },
+    );
+    expect(events).toEqual([{ type: 'error', message }]);
+    expect(calls).toEqual([]);
+  });
+
+  it('says so when the box answers with something other than its agents', async () => {
+    for (const body of ['<html>', '{}', '{"agents":[null]}']) {
+      const url = await stub((res) => res.end(body));
+      expect(await boxRunner({ url, token: TOKEN }).problem('claude')).toBe(
+        `The AI box at ${url} answered unexpectedly.`,
+      );
+    }
   });
 
   it('reads lines split across chunks, multibyte characters too', async () => {

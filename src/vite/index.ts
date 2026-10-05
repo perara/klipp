@@ -212,7 +212,7 @@ export default function klipp(options: KlippOptions = {}): Plugin {
       'GITHUB_ENTERPRISE_TOKEN',
     ]);
     const repo = options.repo ?? git.repo;
-    const boxUrl = box?.url ?? env.KLIPP_BOX_URL;
+    const boxUrl = (box?.url ?? env.KLIPP_BOX_URL)?.trim();
     middleware?.close();
     const mounted = createKlippMiddleware({
       root: git.toplevel ?? config.root,
