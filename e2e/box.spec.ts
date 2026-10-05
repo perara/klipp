@@ -376,4 +376,28 @@ test.describe.serial('the AI box', () => {
     await expect(page.locator('[data-agent]')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
+
+  // Needs: Claude signed in (an earlier test does it); the example app on 5285 uses the box.
+  test('the example app talks through Klipp to the box, page tools included, and the run shows', async ({
+    page,
+  }) => {
+    const errors = watch(page);
+    await page.goto('http://127.0.0.1:5285/');
+    await page.getByRole('button', { name: /Klipp: ask about/ }).click();
+    const chat = page.getByRole('dialog', { name: 'Klipp' });
+    await chat.getByRole('textbox', { name: 'Message Klipp' }).fill('the button is broken');
+    await chat.getByRole('textbox', { name: 'Message Klipp' }).press('Enter');
+    // The box's agent asks the page to point; the answer comes back through Klipp.
+    await expect(page.locator('.hint')).toContainText('Click the button you mean.');
+    await page.getByRole('button', { name: 'Count' }).click({ force: true });
+    await expect(chat.locator('.msg.klipp').last()).toContainText('I read it:');
+
+    await page.goto('/#runs');
+    await page.getByRole('region', { name: 'Runs' }).getByRole('link').first().click();
+    const run = page.getByRole('region', { name: 'Run' });
+    await expect(run).toContainText('example · claude');
+    await expect(run.locator('pre.answer')).toContainText('I read it:');
+    await expect(run).toContainText('Asked the app: point_at_element');
+    expect(errors).toEqual([]);
+  });
 });

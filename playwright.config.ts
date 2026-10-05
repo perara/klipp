@@ -45,6 +45,13 @@ export default defineConfig({
       // Playwright would SIGKILL it: this way it removes its data folder.
       gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     },
+    {
+      // The example app with its agents in the box above: the whole chain, end to end.
+      command: 'npx vite examples/react-app --host 127.0.0.1 --port 5285 --strictPort',
+      env: { KLIPP_BOX_URL: BOX.replace(/\/$/, ''), KLIPP_BOX_TOKEN: 'e2e-box-token-0123456789' },
+      url: 'http://127.0.0.1:5285/',
+      reuseExistingServer: false,
+    },
   ],
   projects: [
     {

@@ -244,6 +244,83 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
   never what anyone typed. `klipp serve --help` lists its settings; `klipp/server` has the same
   as `serve()` and `createKlippMiddleware()`.
 
+## The AI box
+
+The agents as a service. `klipp box` is one place for the Claude Code and Codex logins, a web page
+to sign them in, tokens for the apps that use them, and the runs to watch, live or afterwards.
+Apps ask it for answers over HTTP, so an app's own server needs no CLIs and no logins.
+
+```bash
+KLIPP_ROOT=~/code/app npx klipp box   # then open http://127.0.0.1:8790/
+```
+
+On its page, sign Claude and Codex in with their own CLIs (a link, then a pasted code or a device
+code), check that each is ready, make a token for each app, and read its runs. Settings:
+`KLIPP_ROOT` (the repository the agents read, read-only; default the working directory),
+`KLIPP_BOX_HOST` (`127.0.0.1`) and `KLIPP_BOX_PORT` (`8790`), `KLIPP_BOX_DATA` (logins, tokens and
+run logs; `~/.klipp-box`), `KLIPP_BOX_TOKENS` (`name=token,…`, besides the ones made on the
+page), `KLIPP_MAX_RUNS` (`2`) and `KLIPP_MODEL`. `klipp box --help` lists them.
+
+**Pointing an app at it.** In the Vite plugin, `chat: { box: { url: 'http://127.0.0.1:8790' } }`,
+with `KLIPP_BOX_TOKEN` in `.env`; `KLIPP_BOX_URL` can name the address instead of the config. For
+`klipp serve`, set `KLIPP_BOX_URL` and `KLIPP_BOX_TOKEN`. With a box, the agents run there, not
+on the app's machine; the page's tools still run in the user's browser.
+
+**In a container:**
+
+- Set `KLIPP_BOX_HOST=0.0.0.0`, and publish the port only on the host's `127.0.0.1`, or keep it
+  on an internal network.
+- Put `/data` (`KLIPP_BOX_DATA`) on a volume, and mount the source read-only.
+- Codex needs the same seccomp and AppArmor changes as under
+  [On a shared server](#on-a-shared-server).
+- The page answers only at `localhost`, so reach it through
+  `ssh -L 8790:<box>:8790 <host>` and open `http://127.0.0.1:8790/`.
+
+**What it keeps and refuses:**
+
+- **Only localhost reaches the page.** The page and its `/ui/api/` answer only requests for
+  `localhost`, `127.0.0.1` or `[::1]`, from the page itself. Any other name gets 403, so a site
+  that rebinds its name to your machine gets nothing. Changes (signing in, tokens) also need the
+  header only the page itself sends.
+- **Subscriptions only.** `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
+  `CODEX_API_KEY` are removed from what the agents get, so no run bills an API account.
+- **Tokens are stored hashed.** A new token is shown once; only its SHA-256 is kept.
+- **Run logs are private.** The data folder is mode 0700 and its files 0600. Each run is one file
+  with the app's name, the message, every event and each tool call with its answer; the newest
+  200 are kept.
+- **Read-only agents,** as everywhere else in Klipp. A caller can't change the repository, the
+  sandbox or the environment.
+
+**Protocol v1.** Every request carries `Authorization: Bearer <token>`; a missing or unknown token
+gets 401.
+
+| Endpoint                         | What it does                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------------- |
+| `GET /v1/agents`                 | Per agent: `available`, with a `problem` (not signed in is one), and the `preferred` one. |
+| `POST /v1/runs`                  | Starts a run and streams it as NDJSON; body below.                                        |
+| `POST /v1/runs/:run/tools/:call` | Answers a tool call with `{ "content": "…", "isError": false }`; 204.                     |
+
+A run is `{ agent, system, message, session?, model?, tools }`. `tools` are the page tools the app
+answers: up to 16, each `{ name, description, inputSchema }` with a name like `point_at_element`.
+`system` is at most 64 KiB and `message` 256 KiB. Before the stream starts: 400 for a bad request,
+409 when the agent isn't ready, 429 when `KLIPP_MAX_RUNS` runs are going. Otherwise 200 and one JSON
+object per line:
+
+- `{"type":"run","id":…}` first.
+- `session`, `text`, `break`, `activity`, `error` and `done` events, the same as Klipp's own chat
+  streams.
+- `{"type":"tool_call","id":…,"name":…,"input":…}` when the agent calls one of the run's tools. The
+  app answers it at `/v1/runs/:run/tools/:call` within 30 minutes.
+- An empty line every 15 seconds, to keep the stream alive.
+
+The stream ends after `done` or `error`. If the caller closes it, the run is stopped and any
+pending tool call is answered "The turn ended." A `session` continues only for the token that
+started it.
+
+**One person's box.** It signs in with your own Claude and ChatGPT subscriptions. Anthropic's terms
+don't allow routing other people's requests through a subscription, so give the box only to apps
+that you alone use, or use API keys with the apps other people use.
+
 ## Options
 
 | Option                    | Default                           | What it does                                                           |
@@ -256,6 +333,7 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
 | `chat.pairingCode`        | random per start                  | A fixed pairing code (10+ characters), for a shared test environment.  |
 | `chat.passEnv`            | `[]`                              | More environment variables to pass to the agent, by name.              |
 | `chat.maxRuns`            | `4`                               | Agent runs at once, across all conversations.                          |
+| `chat.box`                | none                              | Run the agents in an [AI box](#the-ai-box): `{ url, token? }`.         |
 | `chat`                    | `{}`                              | `false` turns the chat off and keeps pointing and links.               |
 | `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for the hotkey only.              |
 | `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there.        |
@@ -286,7 +364,7 @@ talks, leans in while you point, and droops when something goes wrong.
 
 ```bash
 npm run check        # format, build, lint, typecheck, unit tests and package exports (CI `check`)
-npm run test:e2e     # the example app under the dev server, a production build, touch, and a paired device
+npm run test:e2e     # the example app under the dev server, a production build, touch, a paired device, and the AI box
 npm run test:compat  # the packed package against Vite 5, 6, 7 and 8
 npm run demo:record  # re-record the demo GIF above (needs ffmpeg)
 ```
