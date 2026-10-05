@@ -4,6 +4,9 @@ const DEV = 'http://127.0.0.1:5281/';
 const BUILD = 'http://127.0.0.1:5282/sub/';
 /** The dev server as another device sees it: by a name that isn't localhost. */
 const REMOTE = 'http://laptop.test:5283/';
+/** The AI box for the tests; test/box-server.mjs and e2e/box.spec.ts read the same variable. */
+const BOX_PORT = process.env.KLIPP_BOX_PORT ?? '5284';
+const BOX = `http://127.0.0.1:${BOX_PORT}/`;
 const permissions = ['clipboard-read', 'clipboard-write'];
 // Software WebGL, for the map and the 3D scene on runners without a GPU.
 const launchOptions = { args: ['--enable-unsafe-swiftshader'] };
@@ -37,8 +40,10 @@ export default defineConfig({
     },
     {
       command: 'node test/box-server.mjs',
-      url: 'http://127.0.0.1:5284/healthz',
+      url: `${BOX}healthz`,
       reuseExistingServer: false,
+      // Playwright would SIGKILL it: this way it removes its data folder.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     },
   ],
   projects: [
@@ -62,7 +67,7 @@ export default defineConfig({
       testMatch: /box/,
       use: {
         ...devices['Desktop Chrome'],
-        baseURL: 'http://127.0.0.1:5284/',
+        baseURL: BOX,
         permissions,
         launchOptions,
       },

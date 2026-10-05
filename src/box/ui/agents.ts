@@ -6,18 +6,43 @@ import { get, listen, messageOf, send, type View } from './api.js';
 const refusal = (panel: HTMLElement, text: string) =>
   panel.replaceChildren(h('p', { class: 'bad', role: 'alert' }, text));
 
+interface Session {
+  box: HTMLElement;
+  stop(): void;
+}
+
 export async function agentsView(): Promise<View> {
   const node = h('section', { 'aria-label': 'Agents' });
-  const stops = new Set<() => void>();
+  /** The sign-ins under way, by agent: one at a time each, and their card is kept as it is. */
+  const underway = new Map<string, Session>();
+  let stopped = false;
 
   async function refresh() {
     const agents = await get<AgentStatus[]>('/ui/api/agents');
-    node.replaceChildren(...agents.map(card));
+    // Card by card in place: one with a sign-in under way is the same node, so its code field
+    // (and the focus in it) survive another agent's refresh.
+    agents.map(card).forEach((box, at) => {
+      const old = node.children[at];
+      if (!old) node.append(box);
+      else if (old !== box) old.replaceWith(box);
+    });
+    while (node.children.length > agents.length) node.lastElementChild?.remove();
   }
 
   function card(agent: AgentStatus): HTMLElement {
+    const kept = underway.get(agent.id);
+    if (kept) return kept.box;
     const panel = h('div');
     const fail = (error: unknown) => refusal(panel, messageOf(error));
+    const signInButton = h(
+      'button',
+      {
+        type: 'button',
+        class: 'primary',
+        onclick: () => void signIn(agent.id, box, panel, signInButton),
+      },
+      'Sign in',
+    );
     const box = h(
       'div',
       { class: 'card', 'data-agent': agent.id },
@@ -44,40 +69,54 @@ export async function agentsView(): Promise<View> {
               },
               'Sign out',
             )
-          : h(
-              'button',
-              { type: 'button', class: 'primary', onclick: () => void signIn(agent, panel) },
-              'Sign in',
-            ),
+          : signInButton,
       ),
       panel,
     );
     return box;
   }
 
-  async function signIn(agent: AgentStatus, panel: HTMLElement) {
+  /** One sign-in at a time for an agent: its button goes while one is under way. */
+  async function signIn(
+    id: string,
+    box: HTMLElement,
+    panel: HTMLElement,
+    button: HTMLButtonElement,
+  ) {
+    underway.get(id)?.stop();
+    // Marked at the click, so no refresh replaces the card while the box starts the sign-in.
+    const session: Session = { box, stop: () => undefined };
+    underway.set(id, session);
+    button.hidden = true;
+    const leave = () => {
+      session.stop();
+      if (underway.get(id) === session) underway.delete(id);
+    };
+    const end = (text: string) => {
+      leave();
+      button.hidden = false;
+      refusal(panel, text);
+    };
     try {
-      const started = await send<{ login: string }>('POST', `/ui/api/agents/${agent.id}/login`);
+      const started = await send<{ login: string }>('POST', `/ui/api/agents/${id}/login`);
+      if (stopped) return;
       const login = started!.login;
       panel.replaceChildren(h('p', { class: 'muted' }, 'Starting…'));
-      const stop = listen<LoginState>(
+      session.stop = listen<LoginState>(
         `/ui/api/logins/${login}`,
-        (state, close) => {
+        (state) => {
           if (state.state === 'waiting') panel.replaceChildren(...waiting(login, state));
+          if (state.state === 'failed') end(state.message);
           if (state.state === 'done') {
-            close();
-            refresh().catch((error) => refusal(panel, messageOf(error)));
-          }
-          if (state.state === 'failed') {
-            close();
-            refusal(panel, state.message);
+            leave();
+            panel.replaceChildren();
+            refresh().catch((error) => end(messageOf(error)));
           }
         },
-        () => refusal(panel, 'Lost the connection to the box.'),
+        () => end('The sign-in stream ended.'),
       );
-      stops.add(stop);
     } catch (error) {
-      refusal(panel, messageOf(error));
+      end(messageOf(error));
     }
   }
 
@@ -130,5 +169,11 @@ export async function agentsView(): Promise<View> {
   }
 
   await refresh();
-  return { node, stop: () => stops.forEach((stop) => stop()) };
+  return {
+    node,
+    stop() {
+      stopped = true;
+      underway.forEach((session) => session.stop());
+    },
+  };
 }

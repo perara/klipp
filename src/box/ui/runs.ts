@@ -16,6 +16,18 @@ async function listView(): Promise<View> {
         'table',
         {},
         h(
+          'thead',
+          {},
+          h(
+            'tr',
+            {},
+            h('th', {}, 'Started'),
+            h('th', {}, 'App'),
+            h('th', {}, 'Agent'),
+            h('th', {}, 'Outcome'),
+          ),
+        ),
+        h(
           'tbody',
           {},
           ...runs.map((run) =>
@@ -45,6 +57,7 @@ async function listView(): Promise<View> {
 function runView(id: string): View {
   const status = h('p', { class: 'muted' }, 'Loading…');
   const lost = h('p', { class: 'bad', role: 'alert' });
+  let started = false;
   const answer = h('pre', { class: 'answer' });
   const steps = h('div');
   const node = h(
@@ -62,6 +75,7 @@ function runView(id: string): View {
     `/ui/api/runs/${encodeURIComponent(id)}`,
     (line, close) => {
       if (line.type === 'head') {
+        started = true;
         status.textContent = `${line.app} · ${line.agent} · ${new Date(line.started).toLocaleString()}`;
         steps.append(h('details', {}, h('summary', {}, 'The message'), h('pre', {}, line.message)));
       } else if (line.type === 'event') {
@@ -86,7 +100,9 @@ function runView(id: string): View {
       }
     },
     () => {
-      lost.textContent = 'Lost the connection to the box.';
+      // A stream that fails is not told apart from one that ends: a run that isn't there, too.
+      if (!started) status.remove();
+      lost.textContent = "The run's stream ended before the run did.";
     },
   );
   return { node, stop };

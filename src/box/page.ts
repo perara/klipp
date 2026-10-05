@@ -2,9 +2,12 @@ import { readFile } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { join } from 'node:path';
 
-/** Scripts and styles only from the box itself; styles go through CSSOM. */
+/**
+ * Nothing but the box itself: its scripts, its stylesheet (constructed in the page, so no inline
+ * style), and its own API. The tab icon is a data URL.
+ */
 const CSP =
-  "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const PAGE = `<!doctype html>
 <html lang="en">

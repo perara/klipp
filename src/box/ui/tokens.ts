@@ -8,12 +8,19 @@ export async function tokensView(): Promise<View> {
     placeholder: 'An app, such as square-dev',
   });
   const shown = h('div');
+  /** The app whose new token is on show, until that token is revoked. */
+  let shownFor: string | undefined;
   // What the box refused, apart from `shown` so a refusal never wipes a token not yet copied.
   const refused = h('div', { class: 'bad', role: 'alert' });
   const rows = h('tbody');
 
   async function refresh() {
     const tokens = await get<TokenInfo[]>('/ui/api/tokens');
+    // A revoked token's secret is of no use: it goes, whoever revoked it.
+    if (shownFor && !tokens.some((token) => token.name === shownFor)) {
+      shown.replaceChildren();
+      shownFor = undefined;
+    }
     rows.replaceChildren(
       ...tokens.map((token) =>
         h(
@@ -73,6 +80,7 @@ export async function tokensView(): Promise<View> {
         h('pre', { class: 'secret' }, made!.token),
       ),
     );
+    shownFor = app;
     name.value = '';
   }
 
@@ -90,7 +98,11 @@ export async function tokensView(): Promise<View> {
     h(
       'table',
       {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'App'), h('th', {}, 'Last used'), h('th', {}))),
+      h(
+        'thead',
+        {},
+        h('tr', {}, h('th', {}, 'App'), h('th', {}, 'Last used'), h('th', {}, 'Action')),
+      ),
       rows,
     ),
   );
