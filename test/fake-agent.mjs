@@ -15,7 +15,14 @@ if (args[0] === '--version') {
   console.log('9.9.9 (fake)');
   process.exit(0);
 }
-if ((args[0] === 'auth' && args[1] === 'status') || (args[0] === 'login' && args[1] === 'status')) {
+// `claude auth status` prints JSON, and says "api_key" when an API key is what signs it in
+// (CLAUDE_FAKE_AUTH=api_key); `codex login status` is an exit code.
+if (args[0] === 'auth' && args[1] === 'status') {
+  const method = process.env.CLAUDE_FAKE_AUTH ?? (existsSync(marker) ? 'claude.ai' : 'none');
+  console.log(JSON.stringify({ loggedIn: method !== 'none', authMethod: method }));
+  process.exit(method === 'none' ? 1 : 0);
+}
+if (args[0] === 'login' && args[1] === 'status') {
   process.exit(existsSync(marker) ? 0 : 1);
 }
 if ((args[0] === 'auth' && args[1] === 'logout') || args[0] === 'logout') {
@@ -23,6 +30,11 @@ if ((args[0] === 'auth' && args[1] === 'logout') || args[0] === 'logout') {
   process.exit(0);
 }
 if (args[0] === 'auth' && args[1] === 'login') {
+  // The box signs in with the subscription, never the Console's API billing.
+  if (!args.includes('--claudeai')) {
+    console.error('Refusing: sign in with --claudeai');
+    process.exit(2);
+  }
   console.log(
     "If the browser didn't open, visit: https://claude.example/oauth/authorize?code=true",
   );
@@ -39,9 +51,14 @@ if (args[0] === 'auth' && args[1] === 'login') {
   process.exit(0);
 }
 if (args[0] === 'login' && args[1] === '--device-auth') {
+  writeFileSync(join(home, 'login.pid'), String(process.pid));
   console.log('1. Open this link\n   \x1b[94mhttps://auth.example/codex/device\x1b[0m');
   console.log('2. Enter this one-time code\n   \x1b[94mABCD-EFGH\x1b[0m');
-  await new Promise((done) => setTimeout(done, Number(process.env.FAKE_DEVICE_MS ?? 300)));
+  await new Promise((done) => setTimeout(done, Number(process.env.CODEX_FAKE_DEVICE_MS ?? 300)));
+  if (process.env.CODEX_FAKE_DEVICE_ERROR) {
+    console.error(process.env.CODEX_FAKE_DEVICE_ERROR);
+    process.exit(1);
+  }
   writeFileSync(marker, '');
   console.log('Successfully logged in');
   process.exit(0);
@@ -226,6 +243,11 @@ if (q.includes('what did i say')) {
   else
     out({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: session });
   process.exit(0);
+} else if (q.includes('api key')) {
+  // Keys bill an account, not the subscription: the box keeps them from the agents.
+  const keys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
+  const seen = [...keys, 'CLAUDE_CODE_OAUTH_TOKEN'].filter((name) => process.env[name]);
+  say(`visible: ${seen.join(', ') || 'none'}`);
 } else if (q.includes('environment')) {
   // What a run is given: the dev server's own secrets stay out.
   say(`DATABASE_URL: ${process.env.DATABASE_URL ? 'visible' : 'hidden'}`);

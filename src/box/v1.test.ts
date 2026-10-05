@@ -182,6 +182,26 @@ describe('box protocol v1', () => {
     expect(body.agents[0]!.problem).toBe("Claude isn't signed in. Open the AI box to sign in.");
   });
 
+  it('keeps API keys from the agents: signing in is with the subscription', async () => {
+    const keys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
+    const tokens = [...keys, 'CLAUDE_CODE_OAUTH_TOKEN'];
+    const before = tokens.map((name) => process.env[name]);
+    for (const name of tokens) process.env[name] = 'secret-for-the-test';
+    try {
+      const out = await box();
+      const said = async (agent: string) =>
+        textOf(await all(await startRun(out, { agent, message: ask('check the api key') })));
+      // The subscription's own token stays; every key that would bill an account goes.
+      expect(await said('claude')).toBe('visible: CLAUDE_CODE_OAUTH_TOKEN');
+      expect(await said('codex')).toBe('visible: none');
+    } finally {
+      tokens.forEach((name, i) => {
+        if (before[i] === undefined) delete process.env[name];
+        else process.env[name] = before[i];
+      });
+    }
+  });
+
   it('refuses requests outside the limits', async () => {
     const tooMany = Array.from({ length: 17 }, (_, i) => ({
       name: `t${i}`,

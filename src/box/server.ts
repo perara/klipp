@@ -12,6 +12,12 @@ import { RunLog } from './runlog.js';
 import { Tokens } from './tokens.js';
 import { createV1 } from './v1.js';
 
+/**
+ * Keys that bill an account. The agents sign in with a subscription, so these never reach them;
+ * CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`, is a subscription's and stays.
+ */
+const API_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
+
 export interface BoxOptions {
   /** The repository the agents read, read-only. */
   root: string;
@@ -48,13 +54,13 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
   mkdirSync(options.data, { recursive: true, mode: 0o700 });
   chmodSync(options.data, 0o700);
   // Every CLI the box starts keeps its login here, apart from the user's own.
-  const env = {
-    ...process.env,
+  const config = {
     CLAUDE_CONFIG_DIR: join(options.data, 'claude'),
     CODEX_HOME: join(options.data, 'codex'),
   };
-  for (const dir of [env.CLAUDE_CONFIG_DIR, env.CODEX_HOME])
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const env: NodeJS.ProcessEnv = { ...process.env, ...config };
+  for (const key of API_KEYS) delete env[key];
+  for (const dir of Object.values(config)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const bridge = new McpBridge(options.version);
   const runner = localRunner({ root: options.root, bridge, env, commands: options.commands });
   const logins = new Logins({ commandOf: (agent) => commandOf(options.commands, agent), env });

@@ -19,7 +19,11 @@ export type LoginState =
   | { state: 'failed'; message: string };
 
 const COMMANDS = {
-  claude: { login: ['auth', 'login'], logout: ['auth', 'logout'], status: ['auth', 'status'] },
+  claude: {
+    login: ['auth', 'login', '--claudeai'],
+    logout: ['auth', 'logout'],
+    status: ['auth', 'status'],
+  },
   codex: { login: ['login', '--device-auth'], logout: ['logout'], status: ['login', 'status'] },
 } satisfies Record<AgentId, Record<'login' | 'logout' | 'status', string[]>>;
 
@@ -29,6 +33,18 @@ const URL_PATTERN = /https:\/\/[^\s"'<>]+/;
 const DEVICE_CODE = /\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b/;
 /** A code pasted from the sign-in page: printable, no spaces. */
 const CODE = /^[!-~]{1,512}$/;
+
+/**
+ * `claude auth status` says "api_key" when an API key signs it in, which bills an account
+ * rather than the subscription: that isn't signed in, whatever its exit code.
+ */
+function byApiKey(stdout: string): boolean {
+  try {
+    return (JSON.parse(stdout) as { authMethod?: unknown }).authMethod === 'api_key';
+  } catch {
+    return false;
+  }
+}
 
 const lastLine = (text: string) => text.trim().split('\n').filter(Boolean).at(-1);
 
@@ -45,10 +61,7 @@ export class Login {
     timeoutMs: number,
     onEnd: () => void,
   ) {
-    const timer = setTimeout(() => {
-      this.set({ state: 'failed', message: 'The sign-in timed out.' });
-      child.kill('SIGTERM');
-    }, timeoutMs);
+    const timer = setTimeout(() => this.end('The sign-in timed out.'), timeoutMs);
     const read = (chunk: Buffer) => {
       this.output = (this.output + chunk.toString('utf8')).replace(ANSI, '').slice(-8000);
       this.parse();
@@ -59,15 +72,15 @@ export class Login {
     child.on('error', (error) => this.set({ state: 'failed', message: error.message }));
     child.on('close', (code) => {
       clearTimeout(timer);
+      // Claude's message is what follows its prompt ("Paste code here if prompted > ").
+      const tail = this.agent === 'claude' ? (this.output.split('>').at(-1) ?? '') : this.output;
       if (this.state.state !== 'failed') {
         this.set(
           code === 0
             ? { state: 'done' }
             : {
                 state: 'failed',
-                message:
-                  lastLine(this.output.split('>').at(-1) ?? '') ??
-                  `The sign-in stopped (exit ${String(code)}).`,
+                message: lastLine(tail) ?? `The sign-in stopped (exit ${String(code)}).`,
               },
         );
       }
@@ -85,13 +98,23 @@ export class Login {
   sendCode(code: string): boolean {
     if (this.state.state !== 'waiting' || !this.state.needsCode || !CODE.test(code)) return false;
     this.child.stdin?.write(`${code}\n`);
+    // The CLI has its code: the page stops asking, and a second code is refused.
+    this.set({ ...this.state, needsCode: false });
     return true;
   }
 
   cancel() {
+    this.end('Cancelled.');
+  }
+
+  /** Fails the sign-in and stops the CLI, by force if it ignores being asked. */
+  private end(message: string) {
     if (this.state.state === 'done' || this.state.state === 'failed') return;
-    this.set({ state: 'failed', message: 'Cancelled.' });
-    this.child.kill('SIGTERM');
+    this.set({ state: 'failed', message });
+    const { child } = this;
+    child.kill('SIGTERM');
+    const force = setTimeout(() => child.kill('SIGKILL'), 5000);
+    child.once('exit', () => clearTimeout(force));
   }
 
   private parse() {
@@ -114,7 +137,14 @@ export class Login {
 
   private set(state: LoginState) {
     this.state = state;
-    for (const listener of this.listeners) listener(state);
+    for (const listener of this.listeners) {
+      try {
+        listener(state);
+      } catch {
+        // A listener that fails must not keep the sign-in from ending: drop it.
+        this.listeners.delete(listener);
+      }
+    }
   }
 }
 
@@ -137,7 +167,9 @@ export class Logins {
   signedIn(agent: AgentId): Promise<boolean> {
     const cached = this.status.get(agent);
     if (cached && Date.now() - cached.at < 10_000) return cached.value;
-    const value = this.exec(agent, COMMANDS[agent].status).then((r) => r.code === 0);
+    const value = this.exec(agent, COMMANDS[agent].status).then(
+      (r) => r.code === 0 && !(agent === 'claude' && byApiKey(r.stdout)),
+    );
     this.status.set(agent, { at: Date.now(), value });
     return value;
   }
@@ -147,17 +179,18 @@ export class Logins {
     return result.code === 0 ? result.stdout.trim().split('\n')[0] : undefined;
   }
 
-  /** Starts the CLI's own sign-in, or joins the one already running. */
+  /** Starts the CLI's own sign-in, or joins the one already under way. */
   start(agent: AgentId): Login {
     const running = this.running.get(agent);
-    if (running) return running;
+    if (running?.state.state === 'starting' || running?.state.state === 'waiting') return running;
     const [binary, ...lead] = this.options.commandOf(agent);
     const child = spawn(binary!, [...lead, ...COMMANDS[agent].login], {
       env: childEnv(AGENTS[agent], this.options.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const login = new Login(agent, child, this.options.timeoutMs ?? 15 * 60_000, () => {
-      this.running.delete(agent);
+      // An ended sign-in's child may exit after the next one has started.
+      if (this.running.get(agent) === login) this.running.delete(agent);
       this.status.delete(agent);
     });
     this.running.set(agent, login);
