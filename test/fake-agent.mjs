@@ -1,11 +1,51 @@
 // A stand-in for `claude` and `codex` in Klipp's tests. It takes the same command line, prints
 // the same JSON lines, keeps a session across runs, and calls Klipp's page tools over MCP the
 // way the real agents do. What it says follows a small script keyed on the user's words.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
+
+// Signing in, for the AI box's tests: the login is a marker file in the agent's config folder.
+const home = process.env.CLAUDE_CONFIG_DIR ?? process.env.CODEX_HOME ?? tmpdir();
+const marker = join(home, 'fake-signed-in');
+if (args[0] === '--version') {
+  console.log('9.9.9 (fake)');
+  process.exit(0);
+}
+if ((args[0] === 'auth' && args[1] === 'status') || (args[0] === 'login' && args[1] === 'status')) {
+  process.exit(existsSync(marker) ? 0 : 1);
+}
+if ((args[0] === 'auth' && args[1] === 'logout') || args[0] === 'logout') {
+  rmSync(marker, { force: true });
+  process.exit(0);
+}
+if (args[0] === 'auth' && args[1] === 'login') {
+  console.log(
+    "If the browser didn't open, visit: https://claude.example/oauth/authorize?code=true",
+  );
+  process.stdout.write('Paste code here if prompted > ');
+  const code = await new Promise((done) =>
+    createInterface({ input: process.stdin }).once('line', done),
+  );
+  if (code !== 'good-code') {
+    console.error('Invalid code');
+    process.exit(1);
+  }
+  writeFileSync(marker, '');
+  console.log('Login successful.');
+  process.exit(0);
+}
+if (args[0] === 'login' && args[1] === '--device-auth') {
+  console.log('1. Open this link\n   \x1b[94mhttps://auth.example/codex/device\x1b[0m');
+  console.log('2. Enter this one-time code\n   \x1b[94mABCD-EFGH\x1b[0m');
+  await new Promise((done) => setTimeout(done, Number(process.env.FAKE_DEVICE_MS ?? 300)));
+  writeFileSync(marker, '');
+  console.log('Successfully logged in');
+  process.exit(0);
+}
 
 // `codex sandbox -- true`: Klipp's check that Codex's sandbox can run. CODEX_FAKE_SANDBOX=broken
 // fails it the way a locked-down container does.

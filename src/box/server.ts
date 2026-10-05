@@ -2,10 +2,12 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { AGENTS } from '../server/agents.js';
 import { json, RequestError } from '../server/http.js';
 import { McpBridge } from '../server/mcp.js';
-import { localRunner } from '../server/runner.js';
+import { commandOf, localRunner } from '../server/runner.js';
 import type { AgentId } from '../shared/protocol.js';
+import { Logins } from './logins.js';
 import { RunLog } from './runlog.js';
 import { Tokens } from './tokens.js';
 import { createV1 } from './v1.js';
@@ -55,11 +57,17 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   const bridge = new McpBridge(options.version);
   const runner = localRunner({ root: options.root, bridge, env, commands: options.commands });
+  const logins = new Logins({ commandOf: (agent) => commandOf(options.commands, agent), env });
+  const problem = async (agent: AgentId) =>
+    (await runner.problem(agent)) ??
+    ((await logins.signedIn(agent))
+      ? undefined
+      : `${AGENTS[agent].label} isn't signed in. Open the AI box to sign in.`);
   const tokens = new Tokens(options.data, options.tokens);
   const log = new RunLog(options.data);
   const v1 = createV1({
     runner,
-    problem: (agent) => runner.problem(agent),
+    problem,
     tokens,
     log,
     maxRuns: options.maxRuns ?? 2,
@@ -99,6 +107,7 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
     async close() {
       v1.close();
+      logins.close();
       bridge.close();
       await new Promise<void>((done) => {
         server.close(() => done());

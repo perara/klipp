@@ -173,6 +173,15 @@ describe('box protocol v1', () => {
     ]);
   });
 
+  it('counts an agent that isn’t signed in as unable to run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'klipp-box-'));
+    const out = await box({ data: dir });
+    const body = (await (await fetch(`${out.url}/v1/agents`, { headers: auth() })).json()) as {
+      agents: Array<{ id: string; problem?: string }>;
+    };
+    expect(body.agents[0]!.problem).toBe("Claude isn't signed in. Open the AI box to sign in.");
+  });
+
   it('refuses requests outside the limits', async () => {
     const tooMany = Array.from({ length: 17 }, (_, i) => ({
       name: `t${i}`,
