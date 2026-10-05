@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -53,6 +53,22 @@ describe('Tokens', () => {
       const tokens = new Tokens(data, ENV);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('tokens.json'));
       expect(tokens.check('klipp-token-0123456789')).toBe('klipp');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("says once why tokens.json can't be read, and starts without the page's tokens", () => {
+    const data = dir();
+    mkdirSync(join(data, 'tokens.json'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(new Tokens(data, ENV).list()).toEqual([{ name: 'klipp', fromEnv: true }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/tokens\.json.*EISDIR/));
+      warn.mockClear();
+      new Tokens(dir()); // no tokens.json yet: nothing to say
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }

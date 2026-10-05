@@ -157,8 +157,13 @@ describe('Logins', () => {
   });
 
   it('does not count an API key as a sign-in', async () => {
-    const box = (open = logins(undefined, { CLAUDE_FAKE_AUTH: 'api_key' }));
+    const box = (open = logins(undefined, {
+      CLAUDE_FAKE_AUTH: 'api_key',
+      CODEX_FAKE_AUTH: 'api_key',
+    }));
     expect(await box.signedIn('claude')).toBe(false);
+    // `codex login status` exits 0 for any login; it says which kind.
+    expect(await box.signedIn('codex')).toBe(false);
   });
 
   it('stops a sign-in that is running when it closes', async () => {

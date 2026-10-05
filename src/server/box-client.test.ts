@@ -129,6 +129,21 @@ describe('boxRunner', () => {
     });
   });
 
+  it('lets go of a refusal it doesn’t read', async () => {
+    for (const status of [401, 429]) {
+      let hungUp = () => {};
+      const gone = new Promise<void>((done) => (hungUp = done));
+      // A body that never ends: only the client letting go of it closes the connection.
+      const url = await stub((res) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.write('{"error":');
+        res.on('close', hungUp);
+      });
+      expect(await boxRunner({ url, token: TOKEN }).problem('claude')).toMatch(/^The AI box /);
+      await gone;
+    }
+  });
+
   it('says so when the box goes away mid-answer', async () => {
     const cut = await stub((res) => {
       res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });

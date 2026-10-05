@@ -16,13 +16,19 @@ if (args[0] === '--version') {
   process.exit(0);
 }
 // `claude auth status` prints JSON, and says "api_key" when an API key is what signs it in
-// (CLAUDE_FAKE_AUTH=api_key); `codex login status` is an exit code.
+// (CLAUDE_FAKE_AUTH=api_key). `codex login status` says how to stderr, with exit 0 for any
+// login: CODEX_FAKE_AUTH=api_key is one with an API key.
 if (args[0] === 'auth' && args[1] === 'status') {
   const method = process.env.CLAUDE_FAKE_AUTH ?? (existsSync(marker) ? 'claude.ai' : 'none');
   console.log(JSON.stringify({ loggedIn: method !== 'none', authMethod: method }));
   process.exit(method === 'none' ? 1 : 0);
 }
 if (args[0] === 'login' && args[1] === 'status') {
+  if (process.env.CODEX_FAKE_AUTH === 'api_key') {
+    console.error('Logged in using an API key - sk-proj-***ABCDE');
+    process.exit(0);
+  }
+  console.error(existsSync(marker) ? 'Logged in using ChatGPT' : 'Not logged in');
   process.exit(existsSync(marker) ? 0 : 1);
 }
 if ((args[0] === 'auth' && args[1] === 'logout') || args[0] === 'logout') {
@@ -255,7 +261,15 @@ if (q.includes('what did i say')) {
   process.exit(0);
 } else if (q.includes('api key')) {
   // Keys bill an account, not the subscription: the box keeps them from the agents.
-  const keys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
+  const keys = [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'OPENAI_API_KEY',
+    'CODEX_API_KEY',
+  ];
   const seen = [...keys, 'CLAUDE_CODE_OAUTH_TOKEN'].filter((name) => process.env[name]);
   say(`visible: ${seen.join(', ') || 'none'}`);
 } else if (q.includes('environment')) {

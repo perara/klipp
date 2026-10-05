@@ -16,11 +16,13 @@ behaviour or options.
   the agents in with their own CLIs, check them, make and revoke tokens, and watch runs live or
   afterwards. The page answers only to localhost names and to its own page, which stops other
   websites and DNS rebinding; it has no sign-in, so keep the port on loopback or on a network
-  only the calling apps share. API keys are stripped from the agents' environment, so only
-  subscriptions are used. Logins, tokens and run logs stay in its private data folder; only the
-  hash of each token is kept, and the newest 200 run logs.
-- `chat.box` in the Vite plugin, and `KLIPP_BOX_URL`/`KLIPP_BOX_TOKEN` for `klipp serve`: run the
-  agents in a box, so the app's server needs no CLIs or logins.
+  only the calling apps share. API keys and the Bedrock, Vertex and base-URL switches are
+  removed from the agents' environment, and a login with an API key doesn't count as signed in.
+  Logins, tokens and run logs stay in its private data folder; only the hash of each token is
+  kept, and the newest 200 run logs.
+- `chat.box` in the Vite plugin, `box` for `createKlippMiddleware()` and `serve()` in
+  `klipp/server`, and `KLIPP_BOX_URL`/`KLIPP_BOX_TOKEN` for `klipp serve`: run the agents in a box,
+  so the app's server needs no CLIs or logins.
 
 ### Changed
 

@@ -43,8 +43,13 @@ export function boxRunner(box: BoxConnection, fetchImpl: typeof fetch = fetch): 
   let cache: { at: number; agents: Promise<Map<AgentId, string | undefined>> } | undefined;
 
   async function refusal(response: Response): Promise<string> {
-    if (response.status === 401) return "The AI box refused Klipp's token.";
-    if (response.status === 429) return 'The AI box is busy; try again shortly.';
+    const unread = (message: string) => {
+      // Let go of the body, or its connection stays open.
+      void response.body?.cancel().catch(() => undefined);
+      return message;
+    };
+    if (response.status === 401) return unread("The AI box refused Klipp's token.");
+    if (response.status === 429) return unread('The AI box is busy; try again shortly.');
     try {
       const body = (await response.json()) as { error?: unknown };
       if (typeof body.error === 'string') return body.error;

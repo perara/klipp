@@ -33,6 +33,8 @@ interface LiveRun {
   app: string;
   pending: Map<string, (result: McpResult) => void>;
   abort: AbortController;
+  /** Settles once the run is over and logged, and its slot is free. */
+  ended: Promise<void>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -142,7 +144,13 @@ export function createV1(deps: V1Deps) {
       const why = error instanceof Error ? error.message : String(error);
       return json(res, 500, { error: `The AI box can't record the run: ${why}` });
     }
-    const entry: LiveRun = { app, pending: new Map(), abort: new AbortController() };
+    let ended = () => {};
+    const entry: LiveRun = {
+      app,
+      pending: new Map(),
+      abort: new AbortController(),
+      ended: new Promise((done) => (ended = done)),
+    };
     live.set(id, entry);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/x-ndjson');
@@ -216,6 +224,7 @@ export function createV1(deps: V1Deps) {
       outcome ??= entry.abort.signal.aborted ? 'stopped' : 'done';
       log.end(outcome);
       res.end();
+      ended();
     }
   }
 
@@ -251,8 +260,14 @@ export function createV1(deps: V1Deps) {
       if (req.method === 'POST' && tool) return toolResult(req, res, app, tool[1]!, tool[2]!);
       json(res, 404, { error: 'No such endpoint.' });
     },
-    close() {
-      for (const entry of live.values()) entry.abort.abort();
+    /** Stops every run, and settles once each has ended, or after 5 s. */
+    async close() {
+      const runs = [...live.values()];
+      for (const entry of runs) entry.abort.abort();
+      await Promise.race([
+        Promise.all(runs.map((entry) => entry.ended)),
+        new Promise((done) => setTimeout(done, 5000).unref()),
+      ]);
     },
   };
 }

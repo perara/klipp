@@ -41,9 +41,14 @@ try {
     const options = boxOptionsFromEnv(process.env, process.cwd());
     const box = await startBox(options);
     close = () => box.close();
-    // The page answers only to localhost names, so not to the 0.0.0.0 a container listens on.
+    // The page answers only to localhost names: at the box's own address when it is one, and
+    // at 127.0.0.1 otherwise, such as for the 0.0.0.0 a container listens on.
+    const { hostname, port } = new URL(box.url);
+    const page = ['localhost', '127.0.0.1', '[::1]'].includes(hostname)
+      ? `${box.url}/`
+      : `http://127.0.0.1:${port}/`;
     console.log(
-      `The AI box is listening on ${box.url}, reading ${options.root}. Its page is at http://127.0.0.1:${options.port}/, and answers only at localhost, 127.0.0.1 or [::1].`,
+      `The AI box is listening on ${box.url}, reading ${options.root}. Its page is at ${page}, and answers only at localhost, 127.0.0.1 or [::1].`,
     );
   } else {
     const options = optionsFromEnv(process.env, process.cwd());

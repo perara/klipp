@@ -46,6 +46,8 @@ export interface LocalRunnerOptions {
   passEnv?: readonly string[] | undefined;
   /** The environment agents start from. Default: this process's. */
   env?: NodeJS.ProcessEnv | undefined;
+  /** Ends an error from a failed login, in place of the agent's advice for a terminal. */
+  loginHint?: string | undefined;
 }
 
 export const WINDOWS =
@@ -53,6 +55,9 @@ export const WINDOWS =
 
 export const commandOf = (commands: LocalRunnerOptions['commands'], agent: AgentId): string[] =>
   commands?.[agent] ?? [AGENTS[agent].binary];
+
+/** How soon a readiness check that failed, such as Codex's sandbox, is run again. */
+const RECHECK_MS = 30_000;
 
 interface Spawned {
   exit: number | null;
@@ -67,6 +72,7 @@ async function spawnAgent(
   spec: RunSpec,
   env: Record<string, string>,
   hooks: RunHooks,
+  loginHint: string | undefined,
 ): Promise<Spawned> {
   const [binary, ...lead] = command;
   const child = spawn(binary!, [...lead, ...agent.args(spec)], {
@@ -84,7 +90,7 @@ async function spawnAgent(
   child.stdin.end(agent.input(spec));
 
   let finished = false;
-  const parse = agent.parser(spec.root);
+  const parse = agent.parser(spec.root, loginHint);
   createInterface({ input: child.stdout }).on('line', (line) => {
     // A line the parser can't make sense of is skipped; throwing here would take the server down.
     let events: AgentEvent[];
@@ -114,8 +120,12 @@ async function spawnAgent(
 export function localRunner(options: LocalRunnerOptions): Runner {
   const env = options.env ?? process.env;
   const windows = process.platform === 'win32' && !options.commands;
-  /** Each agent's own check, such as Codex's sandbox, runs once; installing it is checked each time. */
-  const readiness = new Map<AgentId, Promise<string | undefined>>();
+  /**
+   * Each agent's own check, such as Codex's sandbox: a pass is kept, a failure is checked again
+   * after a while (an AppArmor profile may have been loaded since). Installing it is checked
+   * each time.
+   */
+  const readiness = new Map<AgentId, { value: Promise<string | undefined>; until: number }>();
 
   return {
     problem(id) {
@@ -128,12 +138,13 @@ export function localRunner(options: LocalRunnerOptions): Runner {
       }
       const agent = AGENTS[id];
       if (!agent.ready) return Promise.resolve(undefined);
-      let ready = readiness.get(id);
-      if (!ready) {
-        ready = agent.ready(command, options.root, env);
-        readiness.set(id, ready);
-      }
-      return ready;
+      const cached = readiness.get(id);
+      if (cached && Date.now() < cached.until) return cached.value;
+      const check = { value: agent.ready(command, options.root, env), until: Infinity };
+      const recheck = () => (check.until = Date.now() + RECHECK_MS);
+      void check.value.then((problem) => problem && recheck(), recheck);
+      readiness.set(id, check);
+      return check.value;
     },
 
     async run(request, hooks) {
@@ -165,7 +176,14 @@ export function localRunner(options: LocalRunnerOptions): Runner {
         // Stopped while preparing: the abort listener only hears a later abort, so don't start.
         if (hooks.signal.aborted) return;
         const childVars = childEnv(agent, env, options.passEnv ?? []);
-        const { exit, finished, stderr } = await spawnAgent(agent, command, spec, childVars, hooks);
+        const { exit, finished, stderr } = await spawnAgent(
+          agent,
+          command,
+          spec,
+          childVars,
+          hooks,
+          options.loginHint,
+        );
         if (!finished && !hooks.signal.aborted) {
           const detail = stderr.trim().split('\n').slice(-3).join(' ').slice(0, 400);
           hooks.onEvent({

@@ -17,10 +17,19 @@ import { createUiApi } from './ui-api.js';
 import { createV1 } from './v1.js';
 
 /**
- * Keys that bill an account. The agents sign in with a subscription, so these never reach them;
- * CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`, is a subscription's and stays.
+ * What would bill an account instead of the subscription: API keys, and the switches to
+ * Bedrock, Vertex or another endpoint. They never reach the agents; CLAUDE_CODE_OAUTH_TOKEN,
+ * from `claude setup-token`, is a subscription's and stays.
  */
-const API_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
+const BILLED = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'OPENAI_API_KEY',
+  'CODEX_API_KEY',
+];
 
 export interface BoxOptions {
   /** The repository the agents read, read-only. */
@@ -65,10 +74,16 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     CODEX_HOME: join(options.data, 'codex'),
   };
   const env: NodeJS.ProcessEnv = { ...process.env, ...config };
-  for (const key of API_KEYS) delete env[key];
+  for (const key of BILLED) delete env[key];
   for (const dir of Object.values(config)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const bridge = new McpBridge(options.version);
-  const runner = localRunner({ root: options.root, bridge, env, commands: options.commands });
+  const runner = localRunner({
+    root: options.root,
+    bridge,
+    env,
+    commands: options.commands,
+    loginHint: ' Open the AI box to sign in again.',
+  });
   const logins = new Logins({ commandOf: (agent) => commandOf(options.commands, agent), env });
   const problem = async (agent: AgentId) =>
     (await runner.problem(agent)) ??
@@ -141,7 +156,7 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
   return {
     url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
     async close() {
-      v1.close();
+      await v1.close();
       logins.close();
       bridge.close();
       await new Promise<void>((done) => {

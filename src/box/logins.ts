@@ -35,10 +35,12 @@ const DEVICE_CODE = /\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b/;
 const CODE = /^[!-~]{1,512}$/;
 
 /**
- * `claude auth status` says "api_key" when an API key signs it in, which bills an account
- * rather than the subscription: that isn't signed in, whatever its exit code.
+ * A login that bills an account rather than the subscription isn't signed in, whatever the exit
+ * code: `claude auth status` says "api_key" in its JSON; `codex login status` exits 0 for any
+ * login and says which, such as "Logged in using an API key - sk-…" or "… Amazon Bedrock …".
  */
-function byApiKey(stdout: string): boolean {
+function byApiKey(agent: AgentId, { stdout, stderr }: { stdout: string; stderr: string }): boolean {
+  if (agent === 'codex') return /API key|Bedrock/i.test(`${stdout}${stderr}`);
   try {
     return (JSON.parse(stdout) as { authMethod?: unknown }).authMethod === 'api_key';
   } catch {
@@ -168,7 +170,7 @@ export class Logins {
     const cached = this.status.get(agent);
     if (cached && Date.now() - cached.at < 10_000) return cached.value;
     const value = this.exec(agent, COMMANDS[agent].status).then(
-      (r) => r.code === 0 && !(agent === 'claude' && byApiKey(r.stdout)),
+      (r) => r.code === 0 && !byApiKey(agent, r),
     );
     this.status.set(agent, { at: Date.now(), value });
     return value;
@@ -211,18 +213,23 @@ export class Logins {
     for (const login of this.running.values()) login.cancel();
   }
 
-  private exec(agent: AgentId, args: string[]): Promise<{ code: number | null; stdout: string }> {
+  private exec(
+    agent: AgentId,
+    args: string[],
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
     const [binary, ...lead] = this.options.commandOf(agent);
     return new Promise((done) => {
       let stdout = '';
+      let stderr = '';
       const child = spawn(binary!, [...lead, ...args], {
         env: childEnv(AGENTS[agent], this.options.env),
-        stdio: ['ignore', 'pipe', 'ignore'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 30_000,
       });
       child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
-      child.on('error', () => done({ code: null, stdout }));
-      child.on('close', (code) => done({ code, stdout }));
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+      child.on('error', () => done({ code: null, stdout, stderr }));
+      child.on('close', (code) => done({ code, stdout, stderr }));
     });
   }
 }

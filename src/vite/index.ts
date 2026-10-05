@@ -220,7 +220,8 @@ export default function klipp(options: KlippOptions = {}): Plugin {
       ...(repo ? { repo } : {}),
       ...(dev ? { manifest } : {}),
       ...rest,
-      ...(boxUrl ? { box: { url: boxUrl, token: box?.token ?? env.KLIPP_BOX_TOKEN ?? '' } } : {}),
+      // An empty token in the config is none: the environment's is used.
+      ...(boxUrl ? { box: { url: boxUrl, token: box?.token || env.KLIPP_BOX_TOKEN || '' } } : {}),
     });
     middleware = mounted;
     server.middlewares.use(mounted);

@@ -140,7 +140,13 @@ export class Tokens {
     let text: string;
     try {
       text = readFileSync(this.file, 'utf8');
-    } catch {
+    } catch (error) {
+      // No file yet is the usual start; anything else is worth saying.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(
+          `klipp box: can't read ${this.file} (${error instanceof Error ? error.message : String(error)}), so the tokens made on the page don't work until it can.`,
+        );
+      }
       return [];
     }
     try {

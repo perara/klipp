@@ -1,5 +1,10 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { createServer, type AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -32,6 +37,30 @@ describe.skipIf(!existsSync(cli))('the klipp command', () => {
 
   it('still refuses extra words after a command', () => {
     expect(klipp(['box', 'now']).status).toBe(2);
+  });
+
+  it('names the page at [::1] for a box listening there', async () => {
+    const probe = createServer();
+    await new Promise<void>((done) => probe.listen(0, '::1', done));
+    const { port } = probe.address() as AddressInfo;
+    await new Promise((done) => probe.close(done));
+    const data = mkdtempSync(join(tmpdir(), 'klipp-cli-box-'));
+    const box = spawn(process.execPath, [cli, 'box'], {
+      env: {
+        ...process.env,
+        KLIPP_ROOT: data,
+        KLIPP_BOX_DATA: data,
+        KLIPP_BOX_HOST: '::1',
+        KLIPP_BOX_PORT: String(port),
+      },
+    });
+    try {
+      const [line] = (await once(createInterface({ input: box.stdout }), 'line')) as [string];
+      expect(line).toContain(`Its page is at http://[::1]:${port}/, and answers only at`);
+    } finally {
+      box.kill('SIGTERM');
+      await once(box, 'exit');
+    }
   });
 
   it('says which setting is wrong, and exits 1', () => {

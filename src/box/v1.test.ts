@@ -156,7 +156,7 @@ async function bare(runner: Partial<Runner>, deps: Partial<V1Deps> = {}) {
     requests: () => requests,
     close: () =>
       new Promise<void>((done) => {
-        v1.close();
+        void v1.close();
         server.close(() => done());
         server.closeAllConnections();
       }),
@@ -199,7 +199,15 @@ describe('box protocol v1', () => {
   });
 
   it('keeps API keys from the agents: signing in is with the subscription', async () => {
-    const keys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];
+    const keys = [
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_BASE_URL',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
+      'OPENAI_API_KEY',
+      'CODEX_API_KEY',
+    ];
     const tokens = [...keys, 'CLAUDE_CODE_OAUTH_TOKEN'];
     const before = tokens.map((name) => process.env[name]);
     for (const name of tokens) process.env[name] = 'secret-for-the-test';
@@ -207,7 +215,7 @@ describe('box protocol v1', () => {
       const out = await box();
       const said = async (agent: string) =>
         textOf(await all(await startRun(out, { agent, message: ask('check the api key') })));
-      // The subscription's own token stays; every key that would bill an account goes.
+      // The subscription's own token stays; every key or switch that would bill an account goes.
       expect(await said('claude')).toBe('visible: CLAUDE_CODE_OAUTH_TOKEN');
       expect(await said('codex')).toBe('visible: none');
     } finally {
@@ -527,4 +535,38 @@ describe('box protocol v1', () => {
     expect(next.status).toBe(200);
     await all(next);
   }, 20_000);
+
+  it('closing the box stops its runs, and returns once each has ended', async () => {
+    const dir = data();
+    const tmp = mkdtempSync(join(tmpdir(), 'klipp-box-tmp-'));
+    const before = process.env.TMPDIR;
+    process.env.TMPDIR = tmp; // where this box's runs keep their files
+    try {
+      const b = await box({ data: dir });
+      const response = await startRun(b, { message: ask('the button is broken') });
+      let run = '';
+      for await (const line of lines(response)) {
+        if (line && line.type === 'run') run = String(line.id);
+        if (line && line.type === 'tool_call') break;
+      }
+      const runDirs = () => readdirSync(tmp).filter((name) => name.startsWith('klipp-run-'));
+      expect(runDirs()).toHaveLength(1);
+      await b.close();
+      expect(logOf(dir, run).at(-1)).toMatchObject({ type: 'end', outcome: 'stopped' });
+      expect(runDirs()).toEqual([]);
+    } finally {
+      if (before === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = before;
+    }
+  });
+
+  it('tells a run whose login expired to sign in again in the box, not in a terminal', async () => {
+    for (const agent of ['claude', 'codex']) {
+      const events = await all(await startRun(main, { agent, message: ask('break') }));
+      expect(events.at(-1)).toEqual({
+        type: 'error',
+        message: 'Failed to authenticate: OAuth session expired Open the AI box to sign in again.',
+      });
+    }
+  });
 });

@@ -288,8 +288,11 @@ on the app's machine; the page's tools still run in the user's browser.
   who can reach the port can ask for `localhost` and make tokens or sign the agents out. Keep the
   port on loopback, or on a Docker network shared only with the apps that call the box. An app's
   token guards `/v1`, not the page.
-- **Subscriptions only.** `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
-  `CODEX_API_KEY` are removed from what the agents get, so no run bills an API account.
+- **No API keys from the environment.** `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from what the agents get, and so are the
+  switches to Bedrock, Vertex or another endpoint (`CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_BASE_URL`). A login with an API key (or Codex's with
+  Amazon Bedrock) doesn't count as signed in.
 - **Tokens are stored hashed.** A new token is shown once; only its SHA-256 is kept.
 - **Run logs are private.** The data folder is mode 0700. The box's own files (the tokens and
   each run's log) are 0600; the CLIs' login files in `claude/` and `codex/` keep the modes the

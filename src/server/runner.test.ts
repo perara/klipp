@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from './agents.js';
 import { McpBridge } from './mcp.js';
 import { localRunner } from './runner.js';
@@ -89,5 +89,24 @@ describe('localRunner', () => {
   it('reports a missing CLI as the agent’s problem', async () => {
     expect(await runner.problem('codex')).toMatch(/can't find `codex`/);
     expect(await runner.problem('claude')).toBeUndefined();
+  });
+
+  it('checks a sandbox that failed again, at most every 30 s; one that works stays checked', async () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, CODEX_FAKE_SANDBOX: 'broken' };
+    const codex = localRunner({ root: process.cwd(), bridge, env, commands: { codex: fakeAgent } });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const broken = /Codex's sandbox can't run/;
+      expect(await codex.problem('codex')).toMatch(broken);
+      delete env.CODEX_FAKE_SANDBOX; // such as the AppArmor profile, loaded now
+      expect(await codex.problem('codex')).toMatch(broken);
+      vi.setSystemTime(Date.now() + 30_000);
+      expect(await codex.problem('codex')).toBeUndefined();
+      env.CODEX_FAKE_SANDBOX = 'broken';
+      vi.setSystemTime(Date.now() + 60_000);
+      expect(await codex.problem('codex')).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
