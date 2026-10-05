@@ -196,6 +196,7 @@ describe('childEnv', () => {
       OPENAI_API_KEY: 'o',
       CODEX_HOME: 'x',
       DATABASE_URL: 'postgres://secret',
+      ANTHROPIC_BASE_URL: '',
       GITHUB_TOKEN: 'ghp',
       MY_EXTRA: 'yes',
     };

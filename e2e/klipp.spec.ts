@@ -113,6 +113,20 @@ test('a bug becomes a ticket that is filed only when you say so, labelled as a b
   await expect(replies(page).last()).toHaveText('Filed! 📎');
 });
 
+test('a build shows no paperclip when its chat server does not answer', async ({ page }, info) => {
+  test.skip(info.project.name !== 'build', 'the dev server shows it at once');
+  await page.route('**/@klipp/agents', (route) =>
+    route.fulfill({ status: 502, body: 'Bad Gateway' }),
+  );
+  await page.goto('./');
+  await expect(page.getByRole('heading', { name: 'Klipp example' })).toBeVisible();
+  await page.waitForTimeout(1500);
+  await expect(figure(page)).toHaveCount(0);
+  // The hotkey still opens it, to point and to link.
+  await page.keyboard.press('Alt+Shift+KeyK');
+  await expect(chat(page)).toBeVisible();
+});
+
 test('a message sent while Klipp is answering is answered next, not lost', async ({ page }) => {
   await openChat(page);
   await ask(page, 'hello');

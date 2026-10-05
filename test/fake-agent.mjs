@@ -6,6 +6,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
+
+// `codex sandbox -- true`: Klipp's check that Codex's sandbox can run. CODEX_FAKE_SANDBOX=broken
+// fails it the way a locked-down container does.
+if (args[0] === 'sandbox') {
+  if (process.env.CODEX_FAKE_SANDBOX === 'broken') {
+    process.stderr.write('bwrap: No permissions to create a new namespace\n');
+    process.exit(1);
+  }
+  process.exit(0);
+}
 const codex = args[0] === 'exec';
 const out = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const after = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);

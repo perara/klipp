@@ -1,6 +1,6 @@
 import type { RuntimeConfig } from '../shared/runtime-config.js';
 import { startCapture } from './capture.js';
-import { pair } from './chat-client.js';
+import { listAgents, pair } from './chat-client.js';
 import { identify, resolve } from './identify.js';
 import type { KlippApp } from './ui/app.js';
 
@@ -58,6 +58,13 @@ export function matchesHotkey(event: KeyboardEvent, hotkey: Hotkey): boolean {
 }
 
 const PAIR_PARAM = 'klipp-pair';
+
+/** Whether the chat server answers this user, with an agent that can run. */
+const chatAnswers = (config: RuntimeConfig): Promise<boolean> =>
+  listAgents(config.endpoint).then(
+    (answer) => answer.agents.some((agent) => agent.available),
+    () => false,
+  );
 
 /**
  * Takes the pairing code out of the address before anything can see or keep it, and pairs
@@ -118,7 +125,12 @@ export function start(config: RuntimeConfig): void {
 
   const automated = navigator.webdriver && !config.launcherUnderAutomation;
   if (config.launcher && !automated) {
-    const show = () => void app().then((a) => a.showFigure());
+    const show = () => {
+      // In a build, the paperclip waits for the chat server to answer: a site without one,
+      // or one that won't answer this user, gets no paperclip that can't talk.
+      const answering = config.dev || !config.chat ? Promise.resolve(true) : chatAnswers(config);
+      void answering.then((yes) => (yes ? app().then((a) => a.showFigure()) : undefined));
+    };
     if ('requestIdleCallback' in window) window.requestIdleCallback(show, { timeout: 2000 });
     else setTimeout(show, 300);
   }

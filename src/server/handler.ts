@@ -127,12 +127,38 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   const command = (agent: AgentId) => options.commands?.[agent] ?? [AGENTS[agent].binary];
   const windows = process.platform === 'win32' && !options.commands;
 
-  function agents(): AgentsResponse {
-    const list = (Object.keys(AGENTS) as AgentId[]).map((id) => ({
-      id,
-      label: AGENTS[id].label,
-      available: !windows && onPath(command(id)[0]!),
-    }));
+  /** Each agent's own check, such as Codex's sandbox, runs once; installing it is checked each time. */
+  const readiness = new Map<AgentId, Promise<string | undefined>>();
+  function problemOf(id: AgentId): Promise<string | undefined> {
+    if (windows) return Promise.resolve(WINDOWS);
+    const [binary] = command(id);
+    if (!onPath(binary!)) {
+      return Promise.resolve(
+        `I can't find \`${AGENTS[id].binary}\` on this machine. Install it and log in, then restart the server.`,
+      );
+    }
+    const agent = AGENTS[id];
+    if (!agent.ready) return Promise.resolve(undefined);
+    let ready = readiness.get(id);
+    if (!ready) {
+      ready = agent.ready(command(id), options.root, process.env);
+      readiness.set(id, ready);
+    }
+    return ready;
+  }
+
+  async function agents(): Promise<AgentsResponse> {
+    const list = await Promise.all(
+      (Object.keys(AGENTS) as AgentId[]).map(async (id) => {
+        const problem = await problemOf(id);
+        return {
+          id,
+          label: AGENTS[id].label,
+          available: !problem,
+          ...(problem ? { problem } : {}),
+        };
+      }),
+    );
     const wanted = options.agent ?? 'claude';
     const preferred =
       list.find((a) => a.id === wanted && a.available)?.id ??
@@ -195,14 +221,8 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
         if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
       };
       emit({ type: 'conversation', id: conversation.id });
-      if (windows) return emit({ type: 'error', message: WINDOWS });
-      if (!onPath(command(agent)[0]!)) {
-        const name = AGENTS[agent].binary;
-        return emit({
-          type: 'error',
-          message: `I can't find \`${name}\` on this machine. Install it and log in, then restart the server.`,
-        });
-      }
+      const problem = await problemOf(agent);
+      if (problem) return emit({ type: 'error', message: problem });
       await runTurn(conversation, request.text, request.page, {
         agent: AGENTS[agent],
         command: command(agent),
@@ -288,7 +308,7 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   }
 
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
-    agents: (_req, res) => Promise.resolve(json(res, 200, agents())),
+    agents: async (_req, res) => json(res, 200, await agents()),
     chat,
     'tool-result': toolResult,
     issue,

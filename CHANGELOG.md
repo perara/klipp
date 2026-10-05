@@ -7,6 +7,8 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05
+
 ### Added
 
 - `klipp serve` and `klipp/server`: the chat as its own server, for a shared test environment
@@ -15,6 +17,15 @@ behaviour or options.
   limited per user per hour, tickets say who reported them, and one JSON log line per turn and
   per ticket carries no message text. `GET /healthz` answers health checks, and `SIGTERM` stops
   every run. It won't listen beyond localhost without an identity header.
+- Codex is offered only where its sandbox can run: Klipp runs `codex sandbox -- true` once, and
+  otherwise lists Codex as unavailable, with the reason.
+
+### Changed
+
+- In a build, the paperclip appears only once the chat server answers, so a site without one
+  (or one that won't answer this user) shows no paperclip that can't talk. The hotkey and
+  links still work.
+- Agents no longer get environment variables whose value is empty.
 
 ## [0.6.1] - 2026-10-02
 
@@ -190,7 +201,8 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/perara/klipp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/perara/klipp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/perara/klipp/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/perara/klipp/compare/v0.4.0...v0.5.0

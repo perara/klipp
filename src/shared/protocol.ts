@@ -7,6 +7,8 @@ export interface AgentInfo {
   id: AgentId;
   label: string;
   available: boolean;
+  /** Why it isn't, when it isn't: not installed, or a sandbox this machine won't run. */
+  problem?: string;
 }
 
 export interface AgentsResponse {

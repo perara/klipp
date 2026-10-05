@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { AgentId } from '../shared/protocol.js';
@@ -42,6 +43,8 @@ export interface Agent {
   files?(spec: RunSpec): Record<string, string>;
   /** Where the command is installed, when the agent's sandbox needs to know. */
   install?(command: string): string[];
+  /** Why the agent can't run here, such as a sandbox the machine won't allow; undefined when it can. */
+  ready?(command: string[], root: string, env: NodeJS.ProcessEnv): Promise<string | undefined>;
   /** Written to the process's stdin, which is then closed. */
   input(spec: RunSpec): string;
   /** A parser for one run's stdout, one JSON line at a time. */
@@ -118,7 +121,8 @@ export function childEnv(
     BASE_ENV.has(name) || extra.includes(name) || prefixes.some((p) => name.startsWith(p));
   return Object.fromEntries(
     Object.entries(env).filter(
-      (pair): pair is [string, string] => pair[1] !== undefined && wanted(pair[0]),
+      // An empty value is left out: an empty API key would stop Claude using its login.
+      (pair): pair is [string, string] => Boolean(pair[1]) && wanted(pair[0]),
     ),
   );
 }
@@ -274,6 +278,49 @@ export function codexInstall(command: string, env: NodeJS.ProcessEnv = process.e
 const readable = (paths: string[]) =>
   `{${paths.map((path) => `${JSON.stringify(path)}="read"`).join(', ')}}`;
 
+/** Codex's sandbox: read only the repository, the system files programs need, and Codex itself. */
+function sandboxConfig(install: string[]): string[] {
+  return [
+    'sandbox_mode="read-only"',
+    'default_permissions="klipp"',
+    `permissions.klipp.filesystem=${readable([':minimal', ':workspace_roots', ...install])}`,
+    'shell_environment_policy.inherit="core"',
+  ];
+}
+
+/** Runs `true` in Codex's sandbox: it fails where the machine won't let the sandbox start. */
+function codexSandboxWorks(
+  command: string[],
+  root: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const [binary, ...lead] = command;
+  const config = sandboxConfig(codexInstall(binary!, env)).flatMap((s) => ['-c', s]);
+  return new Promise((done) => {
+    let stderr = '';
+    const child = spawn(binary!, [...lead, 'sandbox', ...config, '--', 'true'], {
+      cwd: root,
+      env: childEnv(codex, env),
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: 30_000,
+    });
+    child.stderr.on('data', (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-1000)));
+    child.on('error', (error) => done(`Codex couldn't start: ${error.message}`));
+    child.on('close', (code) => {
+      // An older Codex without `codex sandbox` can't be checked this way; it gets the benefit
+      // of the doubt, and a failing sandbox then shows up on its first run.
+      if (code === 0 || /unrecognized subcommand|unexpected argument/i.test(stderr))
+        done(undefined);
+      else {
+        const reason = stderr.trim().split('\n').filter(Boolean).at(-1) ?? `exit ${String(code)}`;
+        done(
+          `Codex's sandbox can't run on this machine (${reason}), so Codex is switched off here.`,
+        );
+      }
+    });
+  });
+}
+
 /**
  * Codex, headless: a sandbox that reads only the repository (plus the system files programs
  * need), writes nothing, and gives the commands Codex runs only a core environment; never
@@ -285,10 +332,7 @@ export const codex: Agent = {
   binary: 'codex',
   args(spec) {
     const config = [
-      'sandbox_mode="read-only"',
-      'default_permissions="klipp"',
-      `permissions.klipp.filesystem=${readable([':minimal', ':workspace_roots', ...spec.install])}`,
-      'shell_environment_policy.inherit="core"',
+      ...sandboxConfig(spec.install),
       'approval_policy="never"',
       `developer_instructions=${JSON.stringify(spec.system)}`,
       `mcp_servers.klipp.url=${JSON.stringify(spec.mcpUrl)}`,
@@ -312,6 +356,7 @@ export const codex: Agent = {
   env: (spec) => ({ KLIPP_MCP_TOKEN: spec.mcpToken }),
   envPrefixes: ['OPENAI_', 'CODEX_'],
   install: (command) => codexInstall(command),
+  ready: codexSandboxWorks,
   input: (spec) => spec.message,
   parser() {
     let wrote = false;

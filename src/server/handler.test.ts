@@ -96,8 +96,9 @@ type ToolEvent = ChatEvent & { type: 'client_tool' };
 async function chat(
   request: ChatRequest,
   answer?: (event: ToolEvent, conversation: string) => Promise<string> | string,
+  at = base,
 ) {
-  const response = await post('/@klipp/chat', request);
+  const response = await post('/@klipp/chat', request, headers, at);
   expect(response.headers.get('content-type')).toBe('text/event-stream');
   const events: ChatEvent[] = [];
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
@@ -131,7 +132,12 @@ describe('createKlippMiddleware', () => {
     expect(await response.json()).toEqual({
       agents: [
         { id: 'claude', label: 'Claude', available: true },
-        { id: 'codex', label: 'Codex', available: false },
+        {
+          id: 'codex',
+          label: 'Codex',
+          available: false,
+          problem: expect.stringContaining("can't find `codex`"),
+        },
       ],
       preferred: 'claude',
     });
@@ -233,6 +239,25 @@ describe('createKlippMiddleware', () => {
       type: 'error',
       message: expect.stringContaining('log in'),
     });
+  });
+
+  it('offers Codex only where its sandbox can run, and says why not', async () => {
+    const { base: here } = await serve({ commands: { claude: fakeAgent, codex: fakeAgent } });
+    process.env.CODEX_FAKE_SANDBOX = 'broken';
+    try {
+      const listed = (await (await fetch(`${here}/@klipp/agents`, { headers })).json()) as {
+        agents: Array<{ id: string; available: boolean; problem?: string }>;
+      };
+      expect(listed.agents.find((a) => a.id === 'claude')?.available).toBe(true);
+      expect(listed.agents.find((a) => a.id === 'codex')).toMatchObject({
+        available: false,
+        problem: expect.stringMatching(/Codex's sandbox can't run on this machine \(bwrap: /),
+      });
+      const { events } = await chat({ agent: 'codex', text: 'hi', page }, undefined, here);
+      expect(events.at(-1)).toMatchObject({ type: 'error', message: /switched off here/ });
+    } finally {
+      delete process.env.CODEX_FAKE_SANDBOX;
+    }
   });
 
   it('turns away malformed requests', async () => {
