@@ -18,7 +18,6 @@ import { fileGitHubIssue, githubToken } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
 import { Identity, type IdentityOptions } from './identity.js';
 import { McpBridge } from './mcp.js';
-import { PAGE_TOOLS } from './prompt.js';
 
 export interface KlippServerOptions {
   /** The repository root the agent works in, read-only. */
@@ -111,7 +110,7 @@ const WINDOWS =
 
 /** Connect-style middleware: the chat, page-tool answers, issue filing, and (in development) the manifest. */
 export function createKlippMiddleware(options: KlippServerOptions): KlippMiddleware {
-  const bridge = new McpBridge(PAGE_TOOLS, options.version);
+  const bridge = new McpBridge(options.version);
   const conversations = new Conversations();
   const runs = new Set<AbortController>();
   const identity = options.identity ? new Identity(options.identity) : undefined;

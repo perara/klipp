@@ -25,6 +25,11 @@ interface Message {
 
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 
+interface Registration {
+  handler: McpHandler;
+  tools: McpTool[];
+}
+
 /**
  * A minimal MCP server (streamable HTTP, JSON responses) on its own loopback port, through
  * which a background agent CLI calls tools that need the page or the user. Each conversation
@@ -32,14 +37,11 @@ const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
  */
 export class McpBridge {
   readonly token = randomBytes(24).toString('hex');
-  private readonly handlers = new Map<string, McpHandler>();
+  private readonly runs = new Map<string, Registration>();
   private server: Server | undefined;
   private port = 0;
 
-  constructor(
-    private readonly tools: McpTool[],
-    private readonly version = '0',
-  ) {}
+  constructor(private readonly version = '0') {}
 
   private starting: Promise<void> | undefined;
 
@@ -70,12 +72,13 @@ export class McpBridge {
     return `http://127.0.0.1:${this.port}/mcp/${conversation}`;
   }
 
-  register(conversation: string, handler: McpHandler) {
-    this.handlers.set(conversation, handler);
+  /** A run's tool calls go to `handler`; the run sees only `tools`. */
+  register(run: string, handler: McpHandler, tools: McpTool[]) {
+    this.runs.set(run, { handler, tools });
   }
 
-  unregister(conversation: string) {
-    this.handlers.delete(conversation);
+  unregister(run: string) {
+    this.runs.delete(run);
   }
 
   close() {
@@ -135,16 +138,16 @@ export class McpBridge {
       case 'ping':
         return ok({});
       case 'tools/list':
-        return ok({ tools: this.tools });
+        return ok({ tools: this.runs.get(conversation)?.tools ?? [] });
       case 'tools/call': {
-        const handler = this.handlers.get(conversation);
+        const registration = this.runs.get(conversation);
         const name = typeof message.params?.name === 'string' ? message.params.name : '';
-        if (!handler)
+        if (!registration)
           return ok({
             content: [{ type: 'text', text: 'The page is no longer open.' }],
             isError: true,
           });
-        if (!this.tools.some((tool) => tool.name === name))
+        if (!registration.tools.some((tool) => tool.name === name))
           return fail(-32602, `Unknown tool ${name}`);
         const given = message.params?.arguments;
         const args =
@@ -152,7 +155,7 @@ export class McpBridge {
             ? (given as Record<string, unknown>)
             : {};
         try {
-          const result = await handler(name, args);
+          const result = await registration.handler(name, args);
           return ok({
             content: [{ type: 'text', text: result.text }],
             isError: result.isError ?? false,

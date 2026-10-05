@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { AgentId } from '../shared/protocol.js';
+import type { McpTool } from './mcp.js';
 
 export interface RunSpec {
   /** The repository root: the agent works there, read-only. */
@@ -20,6 +21,8 @@ export interface RunSpec {
   model?: string;
   /** Directories the agent's own install lives in, which its sandbox must be able to read. */
   install: string[];
+  /** Tools the caller answers, offered over MCP; Claude is allowed exactly these. */
+  tools: McpTool[];
 }
 
 export type AgentEvent =
@@ -50,8 +53,6 @@ export interface Agent {
   /** A parser for one run's stdout, one JSON line at a time. */
   parser(root: string): (line: string) => AgentEvent[];
 }
-
-const PAGE_TOOL_NAMES = ['point_at_element', 'inspect_element', 'propose_ticket'];
 
 /** Files Claude never reads, even when git tracks them. */
 const SECRET_FILES = [
@@ -181,7 +182,7 @@ export const claude: Agent = {
       'Read',
       'Grep',
       'Glob',
-      ...PAGE_TOOL_NAMES.map((name) => `mcp__klipp__${name}`),
+      ...spec.tools.map((tool) => `mcp__klipp__${tool.name}`),
     ];
   },
   // The token stays out of the process list: the config is a file only this user can read.

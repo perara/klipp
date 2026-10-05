@@ -14,7 +14,7 @@ import type {
 import { ticketProblems, type Ticket } from '../shared/ticket.js';
 import { childEnv, type Agent, type AgentEvent, type RunSpec } from './agents.js';
 import type { McpBridge, McpResult } from './mcp.js';
-import { SYSTEM_PROMPT } from './prompt.js';
+import { PAGE_TOOLS, SYSTEM_PROMPT } from './prompt.js';
 
 const MAX_CONVERSATIONS = 50;
 const IDLE_MS = 2 * 60 * 60 * 1000;
@@ -220,9 +220,12 @@ export async function runTurn(
     mcpToken: deps.bridge.token,
     ...(deps.model ? { model: deps.model } : {}),
     install: agent.install?.(deps.command[0]!) ?? [],
+    tools: PAGE_TOOLS,
   };
-  deps.bridge.register(conversation.id, (name, input) =>
-    askBrowser(conversation, deps, name, input),
+  deps.bridge.register(
+    conversation.id,
+    (name, input) => askBrowser(conversation, deps, name, input),
+    PAGE_TOOLS,
   );
   let result: Spawned;
   try {

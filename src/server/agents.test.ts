@@ -13,6 +13,7 @@ const spec: RunSpec = {
   mcpUrl: 'http://127.0.0.1:4000/mcp/c1',
   mcpToken: 'secret',
   install: ['/opt/codex'],
+  tools: [{ name: 'point_at_element', description: 'Point.', inputSchema: { type: 'object' } }],
 };
 
 const lines = (parse: (line: string) => unknown[], events: object[]) =>
@@ -52,6 +53,15 @@ describe('claude', () => {
     const resumed = claude.args({ ...spec, session: 'abc' });
     expect(resumed[resumed.indexOf('--resume') + 1]).toBe('abc');
     expect(resumed).not.toContain('--session-id');
+  });
+
+  it('allows exactly the tools the run was given', () => {
+    expect(args.slice(args.indexOf('--allowedTools') + 1)).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'mcp__klipp__point_at_element',
+    ]);
   });
 
   it('turns its stream into session, text, activity and the end', () => {
