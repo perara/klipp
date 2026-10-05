@@ -24,7 +24,15 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['**/*.mjs', '**/*.js', 'src/box/*.ts', 'src/vite/**', 'src/server/**', 'e2e/**', '*.config.ts'],
+    files: [
+      '**/*.mjs',
+      '**/*.js',
+      'src/box/*.ts',
+      'src/vite/**',
+      'src/server/**',
+      'e2e/**',
+      '*.config.ts',
+    ],
     languageOptions: { globals: globals.node },
   },
   {

@@ -44,7 +44,8 @@ const isEntry = (value: unknown): value is Entry => {
     entry !== null &&
     typeof entry.name === 'string' &&
     typeof entry.created === 'string' &&
-    /^[0-9a-f]{64}$/.test(String(entry.sha256))
+    typeof entry.sha256 === 'string' &&
+    /^[0-9a-f]{64}$/.test(entry.sha256)
   );
 };
 
@@ -72,8 +73,19 @@ export class Tokens {
     }
     const entry = this.entries.find((t) => timingSafeEqual(Buffer.from(t.sha256, 'hex'), digest));
     if (!entry) return undefined;
+    // Only persist if lastUsed is missing or >60s old (in-memory always updates).
+    const shouldPersist =
+      !entry.lastUsed || new Date(entry.lastUsed).getTime() < new Date(now).getTime() - 60_000;
     entry.lastUsed = now;
-    this.save();
+    if (shouldPersist) {
+      try {
+        this.save();
+      } catch (error) {
+        console.warn(
+          `klipp box: could not write ${this.file} (${error instanceof Error ? error.message : String(error)}).`,
+        );
+      }
+    }
     return entry.name;
   }
 

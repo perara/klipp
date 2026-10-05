@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -48,9 +49,55 @@ describe('Tokens', () => {
     const data = dir();
     writeFileSync(join(data, 'tokens.json'), '{not json');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const tokens = new Tokens(data, ENV);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('tokens.json'));
-    expect(tokens.check('klipp-token-0123456789')).toBe('klipp');
-    warn.mockRestore();
+    try {
+      const tokens = new Tokens(data, ENV);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('tokens.json'));
+      expect(tokens.check('klipp-token-0123456789')).toBe('klipp');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a valid UI token still authenticates when tokens.json can't be written", () => {
+    const data = dir();
+    const tokens = new Tokens(data);
+    const token = tokens.create('a');
+    // Make directory read-only so save fails.
+    try {
+      chmodSync(data, 0o500);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        expect(tokens.check(token)).toBe('a');
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('tokens.json'));
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      chmodSync(data, 0o700);
+    }
+  });
+
+  it('lastUsed survives a restart', () => {
+    const data = dir();
+    const token = new Tokens(data).create('a');
+    expect(new Tokens(data).list()[0]!.lastUsed).toBeUndefined();
+    new Tokens(data).check(token);
+    expect(new Tokens(data).list()[0]!.lastUsed).toMatch(/^\d{4}-/);
+  });
+
+  it('entries with malformed sha256 (not a string) are dropped', () => {
+    const data = dir();
+    const validSha = createHash('sha256').update('test-token-1234567890').digest('hex');
+    writeFileSync(
+      join(data, 'tokens.json'),
+      JSON.stringify([
+        { name: 'valid', sha256: validSha, created: '2026-01-01T00:00:00Z' },
+        { name: 'invalid', sha256: [1, 2, 3], created: '2026-01-01T00:00:00Z' },
+      ]),
+    );
+    const tokens = new Tokens(data);
+    expect(tokens.list()).toHaveLength(1);
+    expect(tokens.list()[0]!.name).toBe('valid');
+    expect(tokens.check('unknown')).toBeUndefined();
   });
 });
