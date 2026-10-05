@@ -28,6 +28,12 @@ export function isLocal(req: IncomingMessage): boolean {
 }
 
 /**
+ * Asked for by a name that only ever means this machine, whatever the socket: the AI box's web
+ * UI behind a published loopback port or `ssh -L`. A page that rebinds its own name can't pass.
+ */
+export const isLocalName = (req: IncomingMessage): boolean => LOCAL_HOST.test(hostOf(req) ?? '');
+
+/**
  * Sent by Klipp's runtime from the page itself: with Klipp's header, which a cross-site form
  * can't add, and an `Origin` (when there is one) naming the address the request went to.
  */

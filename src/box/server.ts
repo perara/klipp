@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { AGENTS } from '../server/agents.js';
+import { isLocalName } from '../server/guard.js';
 import { json, RequestError } from '../server/http.js';
 import { McpBridge } from '../server/mcp.js';
 import { commandOf, localRunner } from '../server/runner.js';
@@ -10,6 +11,7 @@ import type { AgentId } from '../shared/protocol.js';
 import { Logins } from './logins.js';
 import { RunLog } from './runlog.js';
 import { Tokens } from './tokens.js';
+import { createUiApi } from './ui-api.js';
 import { createV1 } from './v1.js';
 
 /**
@@ -81,6 +83,7 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     keepAliveMs: options.keepAliveMs ?? 15_000,
     toolTimeoutMs: options.toolTimeoutMs ?? 30 * 60_000,
   });
+  const ui = createUiApi({ runner, logins, tokens, log });
 
   const server = createServer((req, res) => {
     const path = (req.url ?? '').split('?', 1)[0]!;
@@ -100,6 +103,18 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     if (path.startsWith('/v1/')) {
       v1.handle(req, res, path).catch(fail);
       return;
+    }
+    if (path === '/' || path.startsWith('/ui/')) {
+      if (!isLocalName(req)) {
+        json(res, 403, { error: 'The AI box answers its web UI only at localhost.' });
+        return;
+      }
+      if (path.startsWith('/ui/api/')) {
+        ui.handle(req, res, path).then((handled) => {
+          if (!handled) json(res, 404, { error: 'No such endpoint.' });
+        }, fail);
+        return;
+      }
     }
     json(res, 404, { error: 'No such page.' });
   });
