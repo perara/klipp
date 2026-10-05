@@ -54,18 +54,21 @@ export class Tokens {
   private readonly file: string;
   private readonly fromEnv: ReturnType<typeof parseEnv>;
   private readonly entries: Entry[];
+  private readonly lastPersisted: Map<string, number>; // Track when each token was last persisted.
 
   /** @param env `name=token,…`, such as Klipp's own token, from `KLIPP_BOX_TOKENS`. */
   constructor(data: string, env?: string) {
     this.file = join(data, 'tokens.json');
     this.fromEnv = parseEnv(env);
     this.entries = this.load();
+    this.lastPersisted = new Map();
   }
 
   /** The name of the app the token belongs to, or undefined for a token the box doesn't know. */
   check(token: string): string | undefined {
     const digest = digestOf(token);
-    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
     const env = this.fromEnv.find((t) => timingSafeEqual(t.sha256, digest));
     if (env) {
       env.lastUsed = now;
@@ -73,13 +76,14 @@ export class Tokens {
     }
     const entry = this.entries.find((t) => timingSafeEqual(Buffer.from(t.sha256, 'hex'), digest));
     if (!entry) return undefined;
-    // Only persist if lastUsed is missing or >60s old (in-memory always updates).
-    const shouldPersist =
-      !entry.lastUsed || new Date(entry.lastUsed).getTime() < new Date(now).getTime() - 60_000;
+    // Only persist if never persisted or >60s ago (in-memory always updates).
+    const lastPersistedMs = this.lastPersisted.get(entry.name);
+    const shouldPersist = !lastPersistedMs || nowMs - lastPersistedMs > 60_000;
     entry.lastUsed = now;
     if (shouldPersist) {
       try {
         this.save();
+        this.lastPersisted.set(entry.name, nowMs);
       } catch (error) {
         console.warn(
           `klipp box: could not write ${this.file} (${error instanceof Error ? error.message : String(error)}).`,
@@ -101,7 +105,9 @@ export class Tokens {
       sha256: digestOf(token).toString('hex'),
       created: new Date().toISOString(),
     });
+    const nowMs = Date.now();
     this.save();
+    this.lastPersisted.set(name, nowMs);
     return token;
   }
 
@@ -109,6 +115,7 @@ export class Tokens {
     const at = this.entries.findIndex((t) => t.name === name);
     if (at < 0) return false;
     this.entries.splice(at, 1);
+    this.lastPersisted.delete(name);
     this.save();
     return true;
   }

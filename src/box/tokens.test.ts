@@ -58,24 +58,29 @@ describe('Tokens', () => {
     }
   });
 
-  it("a valid UI token still authenticates when tokens.json can't be written", () => {
-    const data = dir();
-    const tokens = new Tokens(data);
-    const token = tokens.create('a');
-    // Make directory read-only so save fails.
-    try {
-      chmodSync(data, 0o500);
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it.skipIf(process.getuid?.() === 0)(
+    "a valid UI token still authenticates when tokens.json can't be written",
+    () => {
+      const data = dir();
+      const tokens = new Tokens(data);
+      const token = tokens.create('a');
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+      (tokens as any).lastPersisted.clear();
+      // Make directory read-only so save fails.
       try {
-        expect(tokens.check(token)).toBe('a');
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('tokens.json'));
+        chmodSync(data, 0o500);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+          expect(tokens.check(token)).toBe('a');
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('tokens.json'));
+        } finally {
+          warn.mockRestore();
+        }
       } finally {
-        warn.mockRestore();
+        chmodSync(data, 0o700);
       }
-    } finally {
-      chmodSync(data, 0o700);
-    }
-  });
+    },
+  );
 
   it('lastUsed survives a restart', () => {
     const data = dir();
@@ -92,12 +97,49 @@ describe('Tokens', () => {
       join(data, 'tokens.json'),
       JSON.stringify([
         { name: 'valid', sha256: validSha, created: '2026-01-01T00:00:00Z' },
-        { name: 'invalid', sha256: [1, 2, 3], created: '2026-01-01T00:00:00Z' },
+        { name: 'invalid', sha256: ['a'.repeat(64)], created: '2026-01-01T00:00:00Z' },
       ]),
     );
     const tokens = new Tokens(data);
     expect(tokens.list()).toHaveLength(1);
     expect(tokens.list()[0]!.name).toBe('valid');
     expect(tokens.check('unknown')).toBeUndefined();
+  });
+
+  it('lastUsed persists at most once per minute per token', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const data = dir();
+      const tokens = new Tokens(data);
+      const token = tokens.create('a');
+
+      // First check: persists immediately (just created, so lastPersisted is set).
+      // Clear lastPersisted to force the first check to persist.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+      (tokens as any).lastPersisted.clear();
+      tokens.check(token);
+      let file = readFileSync(join(data, 'tokens.json'), 'utf8');
+      let parsed = JSON.parse(file) as unknown;
+      const firstLastUsed = (parsed as Record<string, unknown>[])[0]!.lastUsed;
+      expect(firstLastUsed).toMatch(/^\d{4}-/);
+
+      // Check within 60s: does not persist, so file's lastUsed stays the same.
+      vi.setSystemTime(new Date('2026-01-01T00:00:30Z'));
+      tokens.check(token);
+      file = readFileSync(join(data, 'tokens.json'), 'utf8');
+      parsed = JSON.parse(file) as unknown;
+      expect((parsed as Record<string, unknown>[])[0]!.lastUsed).toBe(firstLastUsed);
+
+      // Check after 61s: persists, so file's lastUsed is updated.
+      vi.setSystemTime(new Date('2026-01-01T00:01:01Z'));
+      tokens.check(token);
+      file = readFileSync(join(data, 'tokens.json'), 'utf8');
+      parsed = JSON.parse(file) as unknown;
+      expect((parsed as Record<string, unknown>[])[0]!.lastUsed).not.toBe(firstLastUsed);
+      expect((parsed as Record<string, unknown>[])[0]!.lastUsed).toMatch(/^\d{4}-/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
