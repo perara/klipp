@@ -217,4 +217,16 @@ describe('optionsFromEnv', () => {
     expect(() => optionsFromEnv({ KLIPP_AGENT: 'gpt' }, '/r')).toThrow(/KLIPP_AGENT/);
     expect(() => optionsFromEnv({ KLIPP_PORT: 'eighty' }, '/r')).toThrow(/KLIPP_PORT/);
   });
+
+  it('reads the box to run the agents in', () => {
+    expect(
+      optionsFromEnv({ KLIPP_BOX_URL: 'http://box:8790', KLIPP_BOX_TOKEN: 't' }, '/repo').box,
+    ).toEqual({
+      url: 'http://box:8790',
+      token: 't',
+    });
+    expect(() => optionsFromEnv({ KLIPP_BOX_URL: 'http://box:8790' }, '/repo')).toThrow(
+      /KLIPP_BOX_TOKEN/,
+    );
+  });
 });

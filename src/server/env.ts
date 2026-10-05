@@ -10,7 +10,7 @@ const list = (value: string | undefined) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-function positive(name: string, value: string | undefined, fallback: number): number {
+export function positive(name: string, value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
   const number = Number(value);
   if (!Number.isInteger(number) || number < 1)
@@ -30,6 +30,7 @@ function positive(name: string, value: string | undefined, fallback: number): nu
  *   `KLIPP_MESSAGES_PER_HOUR`: per user, default 30.
  * - `KLIPP_MAX_RUNS`: agent runs at once, default 4. `KLIPP_PASS_ENV`: more variables for the
  *   agent, comma-separated.
+ * - `KLIPP_BOX_URL` and `KLIPP_BOX_TOKEN`: run the agents in an AI box (`klipp box`).
  * - GitHub: `KLIPP_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, else the GitHub CLI's login.
  */
 export function optionsFromEnv(env: NodeJS.ProcessEnv, cwd: string): ServeOptions {
@@ -42,6 +43,9 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, cwd: string): ServeOption
   const header = env.KLIPP_IDENTITY_HEADER?.trim();
   const allow = list(env.KLIPP_ALLOW);
   const passEnv = list(env.KLIPP_PASS_ENV);
+  const boxUrl = env.KLIPP_BOX_URL?.trim();
+  if (boxUrl && !env.KLIPP_BOX_TOKEN)
+    throw new Error('KLIPP_BOX_TOKEN is needed with KLIPP_BOX_URL.');
   return {
     root,
     port: positive('KLIPP_PORT', env.KLIPP_PORT, 8787),
@@ -52,6 +56,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, cwd: string): ServeOption
     ...(agent ? { agent: agent as AgentId } : {}),
     ...(env.KLIPP_MODEL ? { model: env.KLIPP_MODEL } : {}),
     ...(passEnv.length ? { passEnv } : {}),
+    ...(boxUrl ? { box: { url: boxUrl, token: env.KLIPP_BOX_TOKEN! } } : {}),
     ...(header
       ? {
           identity: {

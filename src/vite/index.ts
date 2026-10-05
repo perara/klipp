@@ -53,6 +53,12 @@ export interface ChatOptions {
   maxRuns?: number;
   /** Replace an agent's command and leading arguments, as the tests do. */
   commands?: Partial<Record<AgentId, string[]>>;
+  /**
+   * Run the agents in an AI box (`klipp box`) instead of on this machine. The token defaults to
+   * `KLIPP_BOX_TOKEN` from the environment or `.env`, so it stays out of the config; the address
+   * can come from `KLIPP_BOX_URL` the same way.
+   */
+  box?: { url: string; token?: string | undefined } | undefined;
   /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
   labels?: Partial<Record<TicketType, string[]>>;
   /** Replaces filing on GitHub, as the tests do. Returns the issue's address. */
@@ -194,7 +200,8 @@ export default function klipp(options: KlippOptions = {}): Plugin {
    * Closing the server stops every agent run.
    */
   function mountChat(server: ViteDevServer | PreviewServer, dev: boolean) {
-    const chat = options.chat === false ? {} : (options.chat ?? {});
+    const chat: ChatOptions = options.chat === false ? {} : (options.chat ?? {});
+    const { box, ...rest } = chat;
     const envDir = typeof config.envDir === 'string' ? config.envDir : config.root;
     const env = loadEnv(config.mode, envDir, [
       'KLIPP_',
@@ -205,13 +212,15 @@ export default function klipp(options: KlippOptions = {}): Plugin {
       'GITHUB_ENTERPRISE_TOKEN',
     ]);
     const repo = options.repo ?? git.repo;
+    const boxUrl = box?.url ?? env.KLIPP_BOX_URL;
     middleware?.close();
     const mounted = createKlippMiddleware({
       root: git.toplevel ?? config.root,
       env,
       ...(repo ? { repo } : {}),
       ...(dev ? { manifest } : {}),
-      ...chat,
+      ...rest,
+      ...(boxUrl ? { box: { url: boxUrl, token: box?.token ?? env.KLIPP_BOX_TOKEN ?? '' } } : {}),
     });
     middleware = mounted;
     server.middlewares.use(mounted);

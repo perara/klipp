@@ -9,7 +9,8 @@ const USAGE = `Usage: klipp serve
 Runs Klipp's chat as its own HTTP server, for a shared environment behind a sign-in proxy.
 Settings come from the environment: KLIPP_ROOT, KLIPP_PORT, KLIPP_HOST, KLIPP_REPO,
 KLIPP_AGENT, KLIPP_MODEL, KLIPP_IDENTITY_HEADER, KLIPP_ALLOW, KLIPP_MESSAGES_PER_HOUR,
-KLIPP_MAX_RUNS, KLIPP_PASS_ENV, and a GitHub token (KLIPP_GITHUB_TOKEN). See the README.`;
+KLIPP_MAX_RUNS, KLIPP_PASS_ENV, KLIPP_BOX_URL, KLIPP_BOX_TOKEN, and a GitHub token
+(KLIPP_GITHUB_TOKEN). See the README.`;
 
 const [command, ...rest] = process.argv.slice(2);
 if (command === '--help' || command === '-h' || command === 'help') {

@@ -13,6 +13,7 @@ import type {
 } from '../shared/protocol.js';
 import { DEFAULT_LABELS, ticketBody, type TicketType } from '../shared/ticket.js';
 import { AGENTS } from './agents.js';
+import { boxRunner, type BoxConnection } from './box-client.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
@@ -36,6 +37,11 @@ export interface KlippServerOptions {
   commands?: Partial<Record<AgentId, string[]>>;
   /** More of the dev server's environment variables to pass to the agent, by name. */
   passEnv?: string[];
+  /**
+   * Run the agents in an AI box (`klipp box`) instead of on this machine: its address and the
+   * token it knows this app by. This machine then needs no agent CLIs or logins.
+   */
+  box?: BoxConnection | undefined;
   /** Environment for the GitHub token lookup. */
   env?: Record<string, string | undefined>;
   /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
@@ -88,12 +94,14 @@ const MAX_FOOTER = 16_000;
 /** Connect-style middleware: the chat, page-tool answers, issue filing, and (in development) the manifest. */
 export function createKlippMiddleware(options: KlippServerOptions): KlippMiddleware {
   const bridge = new McpBridge(options.version);
-  const runner: Runner = localRunner({
-    root: options.root,
-    bridge,
-    commands: options.commands,
-    passEnv: options.passEnv,
-  });
+  const runner: Runner = options.box
+    ? boxRunner(options.box)
+    : localRunner({
+        root: options.root,
+        bridge,
+        commands: options.commands,
+        passEnv: options.passEnv,
+      });
   const conversations = new Conversations();
   const runs = new Set<AbortController>();
   const identity = options.identity ? new Identity(options.identity) : undefined;
@@ -106,7 +114,7 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     const who = identity?.userOf(req);
     return who && 'user' in who ? who.user : undefined;
   };
-  const windows = process.platform === 'win32' && !options.commands;
+  const windows = !options.box && process.platform === 'win32' && !options.commands;
 
   async function agents(): Promise<AgentsResponse> {
     const list = await Promise.all(
