@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { AGENTS } from '../server/agents.js';
+import { AGENTS, type AgentEvent } from '../server/agents.js';
 import { json, readJson } from '../server/http.js';
 import type { McpResult, McpTool } from '../server/mcp.js';
 import type { RunRequest, Runner } from '../server/runner.js';
 import type { AgentId, AgentsResponse } from '../shared/protocol.js';
-import type { RunEntry, RunLog } from './runlog.js';
+import type { Outcome, RunEntry, RunLog } from './runlog.js';
 import type { Tokens } from './tokens.js';
 
 const AGENT_IDS = Object.keys(AGENTS) as AgentId[];
@@ -25,6 +25,8 @@ export interface V1Deps {
   model?: string | undefined;
   keepAliveMs: number;
   toolTimeoutMs: number;
+  /** How long a CLI may take to exit by itself after its run's `done` or `error`. */
+  exitGraceMs: number;
 }
 
 interface LiveRun {
@@ -149,19 +151,34 @@ export function createV1(deps: V1Deps) {
     const write = (value: unknown) => {
       if (!res.writableEnded) res.write(`${JSON.stringify(value)}\n`);
     };
-    res.on('close', () => entry.abort.abort());
     const keepAlive = setInterval(() => {
       if (!res.writableEnded) res.write('\n');
     }, deps.keepAliveMs);
-    let failed = false;
+    /** Set by the first of: the run's `done` or `error`, or the caller leaving. */
+    let outcome: Outcome | undefined;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const send = (event: AgentEvent) => {
+      if (outcome) return; // The stream has ended: nothing comes after it.
+      write(event);
+      log.write({ type: 'event', at: now(), event });
+      if (event.type !== 'done' && event.type !== 'error') return;
+      outcome = event.type;
+      clearInterval(keepAlive);
+      res.end();
+      // The CLI exits by itself once it has answered; one that stays on is stopped, which
+      // frees its slot.
+      grace = setTimeout(() => entry.abort.abort(), deps.exitGraceMs);
+    };
+    // A caller that hangs up after the end has stopped nothing.
+    res.on('close', () => {
+      if (outcome) return;
+      outcome = 'stopped';
+      entry.abort.abort();
+    });
     write({ type: 'run', id });
     try {
       await deps.runner.run(request, {
-        onEvent: (event) => {
-          if (event.type === 'error') failed = true;
-          write(event);
-          log.write({ type: 'event', at: now(), event });
-        },
+        onEvent: send,
         onTool: (name, input) =>
           new Promise<McpResult>((resolve) => {
             const call = randomUUID();
@@ -189,14 +206,15 @@ export function createV1(deps: V1Deps) {
       });
     } catch (error) {
       // Such as the MCP bridge failing to start: the caller hears it instead of a cut stream.
-      failed = true;
-      write({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+      send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
     } finally {
       clearInterval(keepAlive);
+      clearTimeout(grace);
       for (const finish of [...entry.pending.values()])
         finish({ text: 'The turn ended.', isError: true });
       live.delete(id);
-      log.end(entry.abort.signal.aborted ? 'stopped' : failed ? 'error' : 'done');
+      outcome ??= entry.abort.signal.aborted ? 'stopped' : 'done';
+      log.end(outcome);
       res.end();
     }
   }

@@ -42,6 +42,8 @@ export interface BoxOptions {
   keepAliveMs?: number | undefined;
   /** How long a tool call may wait for its answer. Default: 30 min. */
   toolTimeoutMs?: number | undefined;
+  /** How long a CLI may take to exit after it has answered, before it is stopped. Default: 10 s. */
+  exitGraceMs?: number | undefined;
   /** Where the built web UI is. Default: this package's `dist`. */
   assets?: string | undefined;
   version?: string | undefined;
@@ -85,6 +87,7 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     model: options.model,
     keepAliveMs: options.keepAliveMs ?? 15_000,
     toolTimeoutMs: options.toolTimeoutMs ?? 30 * 60_000,
+    exitGraceMs: options.exitGraceMs ?? 10_000,
   });
   const ui = createUiApi({
     runner,

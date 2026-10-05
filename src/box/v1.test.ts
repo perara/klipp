@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -10,7 +11,8 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ndjsonLines } from '../server/box-client.js';
 import type { McpResult } from '../server/mcp.js';
 import type { Runner } from '../server/runner.js';
 import { RunLog } from './runlog.js';
@@ -95,6 +97,19 @@ async function all(response: Response) {
   for await (const line of lines(response)) if (line) seen.push(line);
   return seen;
 }
+/** A run's log, line by line, from the box's data folder. */
+function logOf(dir: string, run: string) {
+  const file = readdirSync(join(dir, 'runs')).find((name) => name.endsWith(`${run}.jsonl`))!;
+  return readFileSync(join(dir, 'runs', file), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+const outcomeOf = (dir: string, run: string) =>
+  logOf(dir, run).find((l) => l.type === 'end')?.outcome;
+/** The fake agent notes here that it exited by itself, after a `linger`. */
+const lingered = (session: string) => join(tmpdir(), `klipp-fake-agent-${session}.txt`);
+
 const textOf = (events: Array<Record<string, unknown>>) =>
   events
     .filter((e) => e.type === 'text')
@@ -122,6 +137,7 @@ async function bare(runner: Partial<Runner>, deps: Partial<V1Deps> = {}) {
     maxRuns: 1,
     keepAliveMs: 50,
     toolTimeoutMs: 60_000,
+    exitGraceMs: 10_000,
     ...deps,
   });
   let hungUp = () => {};
@@ -436,12 +452,7 @@ describe('box protocol v1', () => {
     const events = await all(await startRun(quick, { message: ask('the button is broken') }));
     expect(textOf(events)).toBe('No problem.');
     expect(events.at(-1)).toEqual({ type: 'done' });
-    const run = String(events[0]!.id);
-    const file = readdirSync(join(dir, 'runs')).find((name) => name.endsWith(`${run}.jsonl`))!;
-    const logged = readFileSync(join(dir, 'runs', file), 'utf8')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const logged = logOf(dir, String(events[0]!.id));
     expect(logged.find((line) => line.type === 'tool_result')).toMatchObject({
       content: 'Nobody answered in time.',
       isError: true,
@@ -481,4 +492,39 @@ describe('box protocol v1', () => {
     expect(again.find((e) => e.type === 'session')!.id).toBe(session);
     expect(textOf(again)).toBe('You said: hello');
   });
+
+  it('a run that answered is done: a caller that hangs up at `done` stops nothing', async () => {
+    const dir = data();
+    const b = await box({ data: dir });
+    const response = await startRun(b, { message: ask('linger 300') });
+    let run = '';
+    let session = '';
+    // As Klipp reads it: it lets go of the stream as soon as it has `done`.
+    for await (const text of ndjsonLines(response.body!)) {
+      const line = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      if (line.type === 'run') run = String(line.id);
+      if (line.type === 'session') session = String(line.id);
+      if (line.type === 'done') break;
+    }
+    await vi.waitFor(() => expect(outcomeOf(dir, run)).toBe('done'), { timeout: 3000 });
+    // The CLI stayed until it was ready, and exited by itself.
+    expect(readFileSync(lingered(session), 'utf8')).toBe('lingered');
+  });
+
+  it('ends the stream at `done`; a CLI that stays on is stopped after a while, freeing its slot', async () => {
+    const dir = data();
+    const b = await box({ data: dir, maxRuns: 1, exitGraceMs: 2000 });
+    // The fake answers, then stays a minute: the stream doesn't wait for it.
+    const events = await all(await startRun(b, { message: ask('linger 60000') }));
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    const run = String(events[0]!.id);
+    const session = String(events.find((e) => e.type === 'session')!.id);
+    // It is still running, in the only slot.
+    expect((await startRun(b, { message: ask('hi') })).status).toBe(429);
+    await vi.waitFor(() => expect(outcomeOf(dir, run)).toBe('done'), { timeout: 10_000 });
+    expect(existsSync(lingered(session))).toBe(false); // stopped, not exited by itself
+    const next = await startRun(b, { message: ask('who are you') });
+    expect(next.status).toBe(200);
+    await all(next);
+  }, 20_000);
 });

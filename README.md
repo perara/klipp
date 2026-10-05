@@ -324,9 +324,10 @@ object per line:
 - `{"type":"error","message":"…"}` when the run fails, and `{"type":"done"}` when it ends well.
 - An empty line every 15 seconds, to keep the stream alive.
 
-The stream ends after `done` or `error`. If the caller closes it, the run is stopped and any
-pending tool call is answered "The turn ended." A `session` continues only for the app (the
-token's name) that started it; for any other app, the run starts a new session.
+The stream ends after `done` or `error`, and the CLI then has 10 seconds to exit by itself. If the
+caller closes the stream before its end, the run is stopped and any pending tool call is answered
+"The turn ended." A `session` continues only for the app (the token's name) that started it; for
+any other app, the run starts a new session.
 
 **One person's box.** It signs in with your own Claude and ChatGPT subscriptions. Anthropic's terms
 don't allow routing other people's requests through a subscription, so give the box only to apps

@@ -243,6 +243,16 @@ if (q.includes('what did i say')) {
   else
     out({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: session });
   process.exit(0);
+} else if (q.includes('linger')) {
+  // Answers, then stays on ("linger <ms>") before it exits by itself, which it notes. A CLI
+  // that is stopped first never gets to.
+  say('Bye for now.');
+  if (codex) out({ type: 'turn.completed', usage: {} });
+  else
+    out({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: session });
+  await new Promise((done) => setTimeout(done, Number(/linger (\d+)/.exec(q)?.[1] ?? 500)));
+  writeFileSync(memory, 'lingered');
+  process.exit(0);
 } else if (q.includes('api key')) {
   // Keys bill an account, not the subscription: the box keeps them from the agents.
   const keys = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY'];

@@ -257,12 +257,16 @@ describe('the box UI API', () => {
       }),
     });
     await run.text();
-    const runs = (await (await call('GET', '/ui/api/runs')).json()) as Array<{
-      id: string;
-      app: string;
-      outcome: string;
-    }>;
-    expect(runs[0]).toMatchObject({ app: 'klipp', outcome: 'done' });
+    // The stream ends at `done`; the run is over once its CLI has exited, a moment later.
+    const runs = await vi.waitFor(async () => {
+      const list = (await (await call('GET', '/ui/api/runs')).json()) as Array<{
+        id: string;
+        app: string;
+        outcome: string;
+      }>;
+      expect(list[0]).toMatchObject({ app: 'klipp', outcome: 'done' });
+      return list;
+    });
     const lines = await events<{ type: string }>(`/ui/api/runs/${runs[0]!.id}`, 99);
     expect(lines[0]!.type).toBe('head');
     expect(lines.at(-1)!.type).toBe('end');

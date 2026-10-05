@@ -378,8 +378,9 @@ test.describe.serial('the AI box', () => {
   });
 
   // Needs: Claude signed in (an earlier test does it); the example app on 5285 uses the box.
-  test('the example app talks through Klipp to the box, page tools included, and the run shows', async ({
+  test('the example app talks through Klipp to the box, page tools included, and the run shows live', async ({
     page,
+    context,
   }) => {
     const errors = watch(page);
     await page.goto('http://127.0.0.1:5285/');
@@ -387,17 +388,27 @@ test.describe.serial('the AI box', () => {
     const chat = page.getByRole('dialog', { name: 'Klipp' });
     await chat.getByRole('textbox', { name: 'Message Klipp' }).fill('the button is broken');
     await chat.getByRole('textbox', { name: 'Message Klipp' }).press('Enter');
-    // The box's agent asks the page to point; the answer comes back through Klipp.
+    // The box's agent asks the page to point, and waits for it.
     await expect(page.locator('.hint')).toContainText('Click the button you mean.');
+
+    // Meanwhile, the box's page shows the run as it goes.
+    const box = await context.newPage();
+    const boxErrors = watch(box);
+    await box.goto('/#runs');
+    const newest = box.getByRole('region', { name: 'Runs' }).getByRole('row').nth(1);
+    await expect(newest).toContainText('running');
+    await newest.getByRole('link').click();
+    const run = box.getByRole('region', { name: 'Run' });
+    await expect(run).toContainText('example · claude');
+    await expect(run).toContainText('Asked the app: point_at_element');
+
+    // The answer comes back through Klipp, and the box's page follows it, without a reload.
     await page.getByRole('button', { name: 'Count' }).click({ force: true });
     await expect(chat.locator('.msg.klipp').last()).toContainText('I read it:');
-
-    await page.goto('/#runs');
-    await page.getByRole('region', { name: 'Runs' }).getByRole('link').first().click();
-    const run = page.getByRole('region', { name: 'Run' });
-    await expect(run).toContainText('example · claude');
     await expect(run.locator('pre.answer')).toContainText('I read it:');
-    await expect(run).toContainText('Asked the app: point_at_element');
+    // Klipp lets go of the stream at `done`: the run is done, not stopped.
+    await expect(run).toContainText('· done');
     expect(errors).toEqual([]);
+    expect(boxErrors).toEqual([]);
   });
 });
