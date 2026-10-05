@@ -100,8 +100,19 @@ export class RunLog {
     };
     this.runs.set(head.id, summary);
     if (head.session) this.claim(head.session, head.app);
+    let warned = false;
     const append = (line: RunLine) => {
-      appendFileSync(path, `${JSON.stringify(line)}\n`);
+      try {
+        appendFileSync(path, `${JSON.stringify(line)}\n`);
+      } catch (error) {
+        // The log records the run; it must never stop it. Say so once, and keep going.
+        if (!warned) {
+          warned = true;
+          console.warn(
+            `The AI box can't write ${path}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       for (const listener of this.listeners.get(head.id) ?? []) {
         try {
           listener(line);

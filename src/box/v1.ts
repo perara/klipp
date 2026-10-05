@@ -5,7 +5,7 @@ import { json, readJson } from '../server/http.js';
 import type { McpResult, McpTool } from '../server/mcp.js';
 import type { RunRequest, Runner } from '../server/runner.js';
 import type { AgentId, AgentsResponse } from '../shared/protocol.js';
-import type { RunLog } from './runlog.js';
+import type { RunEntry, RunLog } from './runlog.js';
 import type { Tokens } from './tokens.js';
 
 const AGENT_IDS = Object.keys(AGENTS) as AgentId[];
@@ -120,17 +120,25 @@ export function createV1(deps: V1Deps) {
       parsed.session && deps.log.ownerOf(parsed.session) === app ? parsed.session : undefined;
     const request: RunRequest = { ...parsed, session, model: parsed.model ?? deps.model };
     const id = randomUUID();
+    // Start the log before taking the slot: if the log can't start, nothing is left behind.
+    // The slot check, the log and the slot stay synchronous, so two requests can't both pass.
+    let log: RunEntry;
+    try {
+      log = deps.log.start({
+        id,
+        app,
+        agent: request.agent,
+        ...(request.model ? { model: request.model } : {}),
+        ...(session ? { session } : {}),
+        message: request.message,
+        started: now(),
+      });
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      return json(res, 500, { error: `The AI box can't record the run: ${why}` });
+    }
     const entry: LiveRun = { app, pending: new Map(), abort: new AbortController() };
     live.set(id, entry);
-    const log = deps.log.start({
-      id,
-      app,
-      agent: request.agent,
-      ...(request.model ? { model: request.model } : {}),
-      ...(session ? { session } : {}),
-      message: request.message,
-      started: now(),
-    });
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/x-ndjson');
     res.setHeader('Cache-Control', 'no-store');

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -222,6 +222,25 @@ describe('box protocol v1', () => {
     );
     expect(theirs.find((e) => e.type === 'session')!.id).not.toBe(session);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'a run log that can’t be written refuses the run and leaks no slot',
+    async () => {
+      const dir = data();
+      const one = await box({ data: dir, maxRuns: 1 });
+      const runs = join(dir, 'runs');
+      chmodSync(runs, 0o500);
+      try {
+        expect((await startRun(one, { message: ask('hi') })).status).toBe(500);
+      } finally {
+        chmodSync(runs, 0o700);
+      }
+      // maxRuns is 1: this only gets in if the refused run didn't keep its slot.
+      const next = await startRun(one, { message: ask('who are you') });
+      expect(next.status).toBe(200);
+      expect(textOf(await all(next))).toBe('I am Claude, in a paperclip.');
+    },
+  );
 
   it('a restarted box still knows which app owns a session', async () => {
     const dir = data();

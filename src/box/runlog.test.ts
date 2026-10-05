@@ -1,7 +1,7 @@
-import { appendFileSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { RunLog, type RunHead, type RunLine } from './runlog.js';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'klipp-runlog-'));
@@ -130,6 +130,37 @@ describe('RunLog', () => {
     log.start(head()).end('done');
     expect(log.read(h.id)).toBeUndefined();
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'a log it can’t write to neither throws nor keeps followers from hearing the run',
+    () => {
+      const data = dir();
+      const log = new RunLog(data);
+      const h = head();
+      const entry = log.start(h);
+      const [name] = readdirSync(join(data, 'runs'));
+      const file = join(data, 'runs', name!);
+      chmodSync(file, 0o400);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const seen: RunLine['type'][] = [];
+        log.follow(h.id, (line) => seen.push(line.type));
+        expect(() => {
+          entry.write({ type: 'event', at: 't', event: { type: 'text', delta: 'a' } });
+          entry.write({ type: 'event', at: 't', event: { type: 'text', delta: 'b' } });
+          entry.end('done');
+        }).not.toThrow();
+        expect(seen).toEqual(['event', 'event', 'end']);
+        expect(log.list()[0]).toMatchObject({ id: h.id, live: false, outcome: 'done' });
+        // One warning for the run, not one per line.
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]![0])).toContain(file);
+      } finally {
+        warn.mockRestore();
+        chmodSync(file, 0o600);
+      }
+    },
+  );
 
   it.each(['../evil', 'a.b', 'a b', ''])(
     'refuses the run id %j, which would be a file name',
