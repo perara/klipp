@@ -1,9 +1,22 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { McpResult } from '../server/mcp.js';
+import type { Runner } from '../server/runner.js';
+import { RunLog } from './runlog.js';
 import { startBox, type BoxOptions, type BoxServer } from './server.js';
+import { Tokens } from './tokens.js';
+import { createV1, type V1Deps } from './v1.js';
 
 const fakeAgent = [
   process.execPath,
@@ -87,6 +100,54 @@ const textOf = (events: Array<Record<string, unknown>>) =>
     .filter((e) => e.type === 'text')
     .map((e) => e.delta)
     .join('');
+
+const forever = (signal: AbortSignal) =>
+  new Promise<void>((done) =>
+    signal.aborted ? done() : signal.addEventListener('abort', () => done()),
+  );
+
+/**
+ * Protocol v1 on a bare HTTP server, with a runner (and, if wanted, an agent check) the test
+ * controls. `gone` settles when the first response closes, so a test can wait for the box to
+ * notice that a client left; `requests()` counts the requests the box has been handed.
+ */
+async function bare(runner: Partial<Runner>, deps: Partial<V1Deps> = {}) {
+  const dir = data();
+  const log = new RunLog(dir);
+  const v1 = createV1({
+    runner: { problem: () => Promise.resolve(undefined), run: () => Promise.resolve(), ...runner },
+    problem: () => Promise.resolve(undefined),
+    tokens: new Tokens(dir, `klipp=${KLIPP}`),
+    log,
+    maxRuns: 1,
+    keepAliveMs: 50,
+    toolTimeoutMs: 60_000,
+    ...deps,
+  });
+  let hungUp = () => {};
+  const gone = new Promise<void>((done) => (hungUp = done));
+  let requests = 0;
+  const server = createServer((req, res) => {
+    requests++;
+    res.on('close', hungUp);
+    v1.handle(req, res, req.url ?? '').catch(() => res.end());
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const started: BoxServer & { log: RunLog; gone: Promise<void>; requests: () => number } = {
+    url: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+    log,
+    gone,
+    requests: () => requests,
+    close: () =>
+      new Promise<void>((done) => {
+        v1.close();
+        server.close(() => done());
+        server.closeAllConnections();
+      }),
+  };
+  boxes.push(started);
+  return started;
+}
 
 let main: BoxServer;
 beforeAll(async () => {
@@ -241,6 +302,144 @@ describe('box protocol v1', () => {
       expect(textOf(await all(next))).toBe('I am Claude, in a paperclip.');
     },
   );
+
+  it('answers a tool call once: a second answer to it gets 404', async () => {
+    const results: McpResult[] = [];
+    const b = await bare({
+      run: async (_request, hooks) => {
+        results.push(await hooks.onTool('point_at_element', {}));
+        await forever(hooks.signal); // the run stays live after the answer
+      },
+    });
+    const leave = new AbortController();
+    const response = await startRun(b, { message: ask('hi') }, KLIPP, leave.signal);
+    let run = '';
+    let call = '';
+    for await (const line of lines(response)) {
+      if (line && line.type === 'run') run = String(line.id);
+      if (line && line.type === 'tool_call') {
+        call = String(line.id);
+        break;
+      }
+    }
+    // Two answers whose bodies are still on their way: the box has both requests, so it must
+    // decide who answered first when the bodies end, not when the requests arrive.
+    const slowly = (content: string) => {
+      const text = new TextEncoder().encode(JSON.stringify({ content }));
+      let finish = () => {};
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(text.slice(0, 1));
+          finish = () => {
+            controller.enqueue(text.slice(1));
+            controller.close();
+          };
+        },
+      });
+      const status = fetch(`${b.url}/v1/runs/${run}/tools/${call}`, {
+        method: 'POST',
+        headers: auth(),
+        body,
+        duplex: 'half',
+      } as RequestInit).then((r) => r.status);
+      return { status, finish: () => finish() };
+    };
+    const first = slowly('one');
+    const second = slowly('two');
+    while (b.requests() < 3) await new Promise((done) => setTimeout(done, 5)); // the run, then both
+    first.finish();
+    expect(await first.status).toBe(204);
+    second.finish();
+    expect(await second.status).toBe(404);
+    expect(results.map((r) => r.text)).toEqual(['one']);
+    const answer = async (content: string) =>
+      (
+        await fetch(`${b.url}/v1/runs/${run}/tools/${call}`, {
+          method: 'POST',
+          headers: auth(),
+          body: JSON.stringify({ content }),
+        })
+      ).status;
+    // Later, with the run still live: the call was answered already.
+    expect(await answer('three')).toBe(404);
+    leave.abort();
+  });
+
+  it('a client that leaves while the box checks its agent takes no slot', async () => {
+    let checking = () => {};
+    const entered = new Promise<void>((done) => (checking = done));
+    let release = () => {};
+    const gate = new Promise<void>((done) => (release = done));
+    let started = 0;
+    const b = await bare(
+      {
+        run: async (_request, { signal }) => {
+          started++;
+          await forever(signal);
+        },
+      },
+      {
+        problem: async () => {
+          checking();
+          await gate;
+          return undefined;
+        },
+      },
+    );
+    const leave = new AbortController();
+    const left = startRun(b, { message: ask('hi') }, KLIPP, leave.signal).catch(() => undefined);
+    await entered;
+    leave.abort();
+    await b.gone; // the box has seen the client go
+    release();
+    await left;
+    // maxRuns is 1: this only gets in if the client that left kept no slot.
+    const stay = new AbortController();
+    const next = await startRun(b, { message: ask('hi') }, KLIPP, stay.signal);
+    expect(next.status).toBe(200);
+    expect(started).toBe(1);
+    stay.abort();
+  });
+
+  it('gives up on a tool call nobody answers, and the run goes on', async () => {
+    const dir = data();
+    const quick = await box({ data: dir, toolTimeoutMs: 100 });
+    const events = await all(await startRun(quick, { message: ask('the button is broken') }));
+    expect(textOf(events)).toBe('No problem.');
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    const run = String(events[0]!.id);
+    const file = readdirSync(join(dir, 'runs')).find((name) => name.endsWith(`${run}.jsonl`))!;
+    const logged = readFileSync(join(dir, 'runs', file), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(logged.find((line) => line.type === 'tool_result')).toMatchObject({
+      content: 'Nobody answered in time.',
+      isError: true,
+    });
+  });
+
+  it('tells the caller when the run can’t start, and ends it as an error', async () => {
+    const b = await bare({ run: () => Promise.reject(new Error('The bridge would not start.')) });
+    const events = await all(await startRun(b, { message: ask('hi') }));
+    expect(events).toEqual([
+      { type: 'run', id: events[0]!.id },
+      { type: 'error', message: 'The bridge would not start.' },
+    ]);
+    expect(b.log.list()[0]).toMatchObject({ live: false, outcome: 'error' });
+    // maxRuns is 1: the failed run kept no slot.
+    expect((await startRun(b, { message: ask('hi') })).status).toBe(200);
+  });
+
+  it('answers 400 to a request that isn’t JSON and 500 to the box’s own failure', async () => {
+    expect(
+      (await fetch(`${main.url}/v1/runs`, { method: 'POST', headers: auth(), body: '{nope' }))
+        .status,
+    ).toBe(400);
+    // A command list with no command: the box's setup is wrong, not the caller's request.
+    const misconfigured = await box({ commands: { claude: [], codex: fakeAgent } });
+    expect((await startRun(misconfigured, { message: ask('hi') })).status).toBe(500);
+  });
 
   it('a restarted box still knows which app owns a session', async () => {
     const dir = data();

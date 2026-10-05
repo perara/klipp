@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { json } from '../server/http.js';
+import { json, RequestError } from '../server/http.js';
 import { McpBridge } from '../server/mcp.js';
 import { localRunner } from '../server/runner.js';
 import type { AgentId } from '../shared/protocol.js';
@@ -72,7 +72,11 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     const path = (req.url ?? '').split('?', 1)[0]!;
     const fail = (error: unknown) => {
       if (res.headersSent) res.end();
-      else json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      else {
+        // A bad request is the caller's to fix; anything else is the box's own failure.
+        const status = error instanceof RequestError ? 400 : 500;
+        json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
     };
     if (req.method === 'GET' && path === '/healthz') {
       res.setHeader('Content-Type', 'text/plain');

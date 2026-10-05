@@ -113,6 +113,9 @@ export function createV1(deps: V1Deps) {
     if (typeof parsed === 'string') return json(res, 400, { error: parsed });
     const problem = await deps.problem(parsed.agent);
     if (problem) return json(res, 409, { error: problem });
+    // A client that left while the agent was checked has nobody to answer, and nothing would
+    // ever stop a run for it: `res.on('close')` below only hears a later close.
+    if (res.destroyed || res.socket?.destroyed) return;
     if (live.size >= deps.maxRuns)
       return json(res, 429, { error: 'The AI box is busy; try again shortly.' });
     // A session goes on only for the app that started it; anything else starts a new one.
@@ -205,13 +208,15 @@ export function createV1(deps: V1Deps) {
     runId: string,
     call: string,
   ) {
+    // The answer is read first and the call looked up and answered with nothing awaited in
+    // between, so an answer that is dropped (a late or a second one) is never told 204.
+    const body = await readJson(req);
+    if (typeof body.content !== 'string') return json(res, 400, { error: 'content must be text.' });
     const entry = live.get(runId);
     if (!entry) return json(res, 404, { error: 'No such run.' });
     if (entry.app !== app) return json(res, 403, { error: 'Another app started this run.' });
     const finish = entry.pending.get(call);
     if (!finish) return json(res, 404, { error: 'No such tool call waiting.' });
-    const body = await readJson(req);
-    if (typeof body.content !== 'string') return json(res, 400, { error: 'content must be text.' });
     finish({ text: body.content, isError: body.isError === true });
     res.statusCode = 204;
     res.end();
