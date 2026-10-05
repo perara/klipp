@@ -35,22 +35,37 @@ export default defineConfig({
       url: 'http://127.0.0.1:5283/',
       reuseExistingServer: false,
     },
+    {
+      command: 'node test/box-server.mjs',
+      url: 'http://127.0.0.1:5284/healthz',
+      reuseExistingServer: false,
+    },
   ],
   projects: [
     {
       name: 'dev',
-      testIgnore: /touch|remote/,
+      testIgnore: /touch|remote|box/,
       use: { ...devices['Desktop Chrome'], baseURL: DEV, permissions, launchOptions },
     },
     {
       name: 'build',
-      testIgnore: /touch|remote/,
+      testIgnore: /touch|remote|box/,
       use: { ...devices['Desktop Chrome'], baseURL: BUILD, permissions, launchOptions },
     },
     {
       name: 'touch',
       testMatch: /touch/,
       use: { ...devices['Pixel 7'], baseURL: DEV, permissions },
+    },
+    {
+      name: 'box',
+      testMatch: /box/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: 'http://127.0.0.1:5284/',
+        permissions,
+        launchOptions,
+      },
     },
     {
       name: 'remote',

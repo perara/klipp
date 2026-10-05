@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AGENTS } from '../server/agents.js';
 import { isLocalName } from '../server/guard.js';
 import { json, RequestError } from '../server/http.js';
@@ -9,6 +10,7 @@ import { McpBridge } from '../server/mcp.js';
 import { commandOf, localRunner } from '../server/runner.js';
 import type { AgentId } from '../shared/protocol.js';
 import { Logins } from './logins.js';
+import { serveAsset, servePage } from './page.js';
 import { RunLog } from './runlog.js';
 import { Tokens } from './tokens.js';
 import { createUiApi } from './ui-api.js';
@@ -51,7 +53,7 @@ export interface BoxServer {
   close(): Promise<void>;
 }
 
-/** The AI box: Klipp's agents behind box protocol v1, and (Task 8–9) a web UI to set them up. */
+/** The AI box: Klipp's agents behind box protocol v1, and a web UI to set them up. */
 export async function startBox(options: BoxOptions): Promise<BoxServer> {
   mkdirSync(options.data, { recursive: true, mode: 0o700 });
   chmodSync(options.data, 0o700);
@@ -71,6 +73,7 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     ((await logins.signedIn(agent))
       ? undefined
       : `${AGENTS[agent].label} isn't signed in. Open the AI box to sign in.`);
+  const assets = options.assets ?? fileURLToPath(new URL('../', import.meta.url));
   const tokens = new Tokens(options.data, options.tokens);
   const log = new RunLog(options.data);
   const v1 = createV1({
@@ -121,6 +124,8 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
         }, fail);
         return;
       }
+      if (req.method === 'GET' && path === '/') return servePage(res);
+      if (req.method === 'GET' && serveAsset(res, path, assets)) return;
     }
     json(res, 404, { error: 'No such page.' });
   });
