@@ -49,6 +49,22 @@ describe('localRunner', () => {
     );
   });
 
+  it('never starts the agent for a run already stopped', async () => {
+    const events: AgentEvent[] = [];
+    const stopped = new AbortController();
+    stopped.abort();
+    await runner.run(
+      { agent: 'claude', system: 'S', message: ask('who are you'), tools: [TOOL] },
+      {
+        onEvent: (event) => events.push(event),
+        onTool: () => Promise.reject(new Error('none')),
+        signal: stopped.signal,
+      },
+    );
+    // The fake agent's first event is `session`: any event at all means it was started.
+    expect(events).toEqual([]);
+  });
+
   it('says why when the agent stops without finishing', async () => {
     const broken = localRunner({
       root: process.cwd(),

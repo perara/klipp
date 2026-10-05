@@ -162,6 +162,8 @@ export function localRunner(options: LocalRunnerOptions): Runner {
         for (const [name, content] of Object.entries(agent.files?.(spec) ?? {})) {
           await writeFile(join(dir, name), content, { mode: 0o600 });
         }
+        // Stopped while preparing: the abort listener only hears a later abort, so don't start.
+        if (hooks.signal.aborted) return;
         const childVars = childEnv(agent, env, options.passEnv ?? []);
         const { exit, finished, stderr } = await spawnAgent(agent, command, spec, childVars, hooks);
         if (!finished && !hooks.signal.aborted) {
