@@ -83,7 +83,13 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     keepAliveMs: options.keepAliveMs ?? 15_000,
     toolTimeoutMs: options.toolTimeoutMs ?? 30 * 60_000,
   });
-  const ui = createUiApi({ runner, logins, tokens, log });
+  const ui = createUiApi({
+    runner,
+    logins,
+    tokens,
+    log,
+    keepAliveMs: options.keepAliveMs ?? 15_000,
+  });
 
   const server = createServer((req, res) => {
     const path = (req.url ?? '').split('?', 1)[0]!;
