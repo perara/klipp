@@ -74,7 +74,7 @@ when the project allows it, so allow it for your project's own dependencies firs
 
 ```bash
 npm config set allow-remote root --location=project
-npm install -D https://github.com/perara/klipp/releases/download/v0.7.0/klipp-0.7.0.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.8.0/klipp-0.8.0.tgz
 ```
 
 The first line writes `allow-remote=root` to the project's `.npmrc`; commit it with the lockfile,
@@ -268,26 +268,33 @@ on the app's machine; the page's tools still run in the user's browser.
 
 **In a container:**
 
-- Set `KLIPP_BOX_HOST=0.0.0.0`, and publish the port only on the host's `127.0.0.1`, or keep it
-  on an internal network.
+- Set `KLIPP_BOX_HOST=0.0.0.0` so the published port reaches the box, and keep that port on
+  loopback: publish it only on the host's `127.0.0.1`, or put the box on a Docker network shared
+  only with the apps that call it. The page has no sign-in and shares its port with `/v1`, so
+  whoever can reach the port can use the page.
 - Put `/data` (`KLIPP_BOX_DATA`) on a volume, and mount the source read-only.
 - Codex needs the same seccomp and AppArmor changes as under
   [On a shared server](#on-a-shared-server).
-- The page answers only at `localhost`, so reach it through
+- The page answers only to localhost names, so reach it through
   `ssh -L 8790:<box>:8790 <host>` and open `http://127.0.0.1:8790/`.
 
 **What it keeps and refuses:**
 
-- **Only localhost reaches the page.** The page and its `/ui/api/` answer only requests for
-  `localhost`, `127.0.0.1` or `[::1]`, from the page itself. Any other name gets 403, so a site
-  that rebinds its name to your machine gets nothing. Changes (signing in, tokens) also need the
-  header only the page itself sends.
+- **The page answers only to localhost names, and only to its own page.** The page and its
+  `/ui/api/` answer requests for `localhost`, `127.0.0.1` or `[::1]` and refuse any other name
+  with 403. Changes (signing in, tokens) also need the header the page itself sends, which another
+  website can't add. That stops other websites and DNS rebinding.
+- **The page has no sign-in.** It checks the name a request asks for, not who connected: anyone
+  who can reach the port can ask for `localhost` and make tokens or sign the agents out. Keep the
+  port on loopback, or on a Docker network shared only with the apps that call the box. An app's
+  token guards `/v1`, not the page.
 - **Subscriptions only.** `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
   `CODEX_API_KEY` are removed from what the agents get, so no run bills an API account.
 - **Tokens are stored hashed.** A new token is shown once; only its SHA-256 is kept.
-- **Run logs are private.** The data folder is mode 0700 and its files 0600. Each run is one file
-  with the app's name, the message, every event and each tool call with its answer; the newest
-  200 are kept.
+- **Run logs are private.** The data folder is mode 0700. The box's own files (the tokens and
+  each run's log) are 0600; the CLIs' login files in `claude/` and `codex/` keep the modes the
+  CLIs give them, inside those 0700 folders. A run is one file with the app's name, the message,
+  every event and each tool call with its answer; the newest 200 are kept.
 - **Read-only agents,** as everywhere else in Klipp. A caller can't change the repository, the
   sandbox or the environment.
 
@@ -298,7 +305,7 @@ gets 401.
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
 | `GET /v1/agents`                 | Per agent: `available`, with a `problem` (not signed in is one), and the `preferred` one. |
 | `POST /v1/runs`                  | Starts a run and streams it as NDJSON; body below.                                        |
-| `POST /v1/runs/:run/tools/:call` | Answers a tool call with `{ "content": "…", "isError": false }`; 204.                     |
+| `POST /v1/runs/:run/tools/:call` | Answers a tool call with `{ "content": "…", "isError"?: true }`; 204.                     |
 
 A run is `{ agent, system, message, session?, model?, tools }`. `tools` are the page tools the app
 answers: up to 16, each `{ name, description, inputSchema }` with a name like `point_at_element`.
@@ -306,16 +313,20 @@ answers: up to 16, each `{ name, description, inputSchema }` with a name like `p
 409 when the agent isn't ready, 429 when `KLIPP_MAX_RUNS` runs are going. Otherwise 200 and one JSON
 object per line:
 
-- `{"type":"run","id":…}` first.
-- `session`, `text`, `break`, `activity`, `error` and `done` events, the same as Klipp's own chat
-  streams.
-- `{"type":"tool_call","id":…,"name":…,"input":…}` when the agent calls one of the run's tools. The
-  app answers it at `/v1/runs/:run/tools/:call` within 30 minutes.
+- `{"type":"run","id":"<run>"}` first.
+- `{"type":"session","id":"<session>"}`: the agent's session, to send as `session` next time.
+- `{"type":"text","delta":"…"}` for the answer as it comes, and `{"type":"break"}` where one
+  paragraph of it ends and another begins.
+- `{"type":"activity","label":"…"}` for what the agent is doing, such as reading a file.
+- `{"type":"tool_call","id":"<call>","name":"…","input":{…}}` when the agent calls one of the run's
+  tools. The app answers it at `/v1/runs/:run/tools/:call` with `{ "content": "…" }` (and
+  `"isError": true` for a failure) within 30 minutes.
+- `{"type":"error","message":"…"}` when the run fails, and `{"type":"done"}` when it ends well.
 - An empty line every 15 seconds, to keep the stream alive.
 
 The stream ends after `done` or `error`. If the caller closes it, the run is stopped and any
-pending tool call is answered "The turn ended." A `session` continues only for the token that
-started it.
+pending tool call is answered "The turn ended." A `session` continues only for the app (the
+token's name) that started it; for any other app, the run starts a new session.
 
 **One person's box.** It signs in with your own Claude and ChatGPT subscriptions. Anthropic's terms
 don't allow routing other people's requests through a subscription, so give the box only to apps

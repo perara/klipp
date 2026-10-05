@@ -20,7 +20,13 @@ klipp box     The AI box: Claude Code and Codex as a service, with an API for ap
               KLIPP_MODEL. See the README.`;
 
 const [command, ...rest] = process.argv.slice(2);
-if (command === '--help' || command === '-h' || command === 'help') {
+const isHelp = (word: string | undefined) => word === '--help' || word === '-h';
+// `klipp --help`, `klipp help`, and `klipp serve --help` / `klipp box --help`.
+if (
+  isHelp(command) ||
+  command === 'help' ||
+  ((command === 'serve' || command === 'box') && rest.length === 1 && isHelp(rest[0]))
+) {
   console.log(USAGE);
   process.exit(0);
 }
@@ -35,8 +41,9 @@ try {
     const options = boxOptionsFromEnv(process.env, process.cwd());
     const box = await startBox(options);
     close = () => box.close();
+    // The page answers only to localhost names, so not to the 0.0.0.0 a container listens on.
     console.log(
-      `The AI box is listening on ${box.url}, reading ${options.root}. Its page is at ${box.url}/ on this machine.`,
+      `The AI box is listening on ${box.url}, reading ${options.root}. Its page is at http://127.0.0.1:${options.port}/, and answers only at localhost, 127.0.0.1 or [::1].`,
     );
   } else {
     const options = optionsFromEnv(process.env, process.cwd());
