@@ -1,6 +1,6 @@
 import { h } from '../../client/ui/dom.js';
 import type { TokenInfo } from '../tokens.js';
-import { get, send, type View } from './api.js';
+import { get, messageOf, send, type View } from './api.js';
 
 export async function tokensView(): Promise<View> {
   const name = h('input', {
@@ -8,6 +8,8 @@ export async function tokensView(): Promise<View> {
     placeholder: 'An app, such as square-dev',
   });
   const shown = h('div');
+  // What the box refused, apart from `shown` so a refusal never wipes a token not yet copied.
+  const refused = h('div', { class: 'bad', role: 'alert' });
   const rows = h('tbody');
 
   async function refresh() {
@@ -33,8 +35,8 @@ export async function tokensView(): Promise<View> {
                   {
                     type: 'button',
                     onclick: () =>
-                      void send('DELETE', `/ui/api/tokens/${encodeURIComponent(token.name)}`).then(
-                        refresh,
+                      void act(() =>
+                        send('DELETE', `/ui/api/tokens/${encodeURIComponent(token.name)}`),
                       ),
                   },
                   'Revoke',
@@ -45,25 +47,33 @@ export async function tokensView(): Promise<View> {
     );
   }
 
-  async function create() {
-    const app = name.value.trim();
+  /** Runs what the user asked for, shows a refusal, and reads the list again either way. */
+  async function act(action: () => Promise<unknown>) {
+    refused.textContent = '';
     try {
-      const made = await send<{ token: string }>('POST', '/ui/api/tokens', { name: app });
-      shown.replaceChildren(
-        h(
-          'div',
-          { class: 'card' },
-          h('p', {}, `The token for ${app}. It is shown only now:`),
-          h('pre', { class: 'secret' }, made!.token),
-        ),
-      );
-      name.value = '';
+      await action();
+    } catch (error) {
+      refused.textContent = messageOf(error);
+    }
+    try {
       await refresh();
     } catch (error) {
-      shown.replaceChildren(
-        h('p', { class: 'bad' }, error instanceof Error ? error.message : String(error)),
-      );
+      refused.textContent = messageOf(error);
     }
+  }
+
+  async function create() {
+    const app = name.value.trim();
+    const made = await send<{ token: string }>('POST', '/ui/api/tokens', { name: app });
+    shown.replaceChildren(
+      h(
+        'div',
+        { class: 'card' },
+        h('p', {}, `The token for ${app}. It is shown only now:`),
+        h('pre', { class: 'secret' }, made!.token),
+      ),
+    );
+    name.value = '';
   }
 
   const node = h(
@@ -71,11 +81,12 @@ export async function tokensView(): Promise<View> {
     { 'aria-label': 'Tokens' },
     h(
       'form',
-      { class: 'row card', onsubmit: (event: Event) => (event.preventDefault(), void create()) },
+      { class: 'row card', onsubmit: (event: Event) => (event.preventDefault(), void act(create)) },
       name,
       h('button', { type: 'submit', class: 'primary' }, 'Create token'),
     ),
     shown,
+    refused,
     h(
       'table',
       {},

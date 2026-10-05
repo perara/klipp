@@ -44,6 +44,7 @@ async function listView(): Promise<View> {
 
 function runView(id: string): View {
   const status = h('p', { class: 'muted' }, 'Loading…');
+  const lost = h('p', { class: 'bad', role: 'alert' });
   const answer = h('pre', { class: 'answer' });
   const steps = h('div');
   const node = h(
@@ -51,35 +52,42 @@ function runView(id: string): View {
     { 'aria-label': 'Run' },
     h('p', {}, h('a', { href: '#runs' }, '← All runs')),
     status,
+    lost,
     h('h2', {}, 'Answer'),
     answer,
     h('h2', {}, 'Steps'),
     steps,
   );
-  const stop = listen<RunLine>(`/ui/api/runs/${encodeURIComponent(id)}`, (line, close) => {
-    if (line.type === 'head') {
-      status.textContent = `${line.app} · ${line.agent} · ${new Date(line.started).toLocaleString()}`;
-      steps.append(h('details', {}, h('summary', {}, 'The message'), h('pre', {}, line.message)));
-    } else if (line.type === 'event') {
-      const event = line.event;
-      if (event.type === 'text') answer.append(event.delta);
-      else if (event.type === 'break') answer.append('\n\n');
-      else if (event.type === 'activity') steps.append(h('p', { class: 'muted' }, event.label));
-      else if (event.type === 'error') steps.append(h('p', { class: 'bad' }, event.message));
-    } else if (line.type === 'tool_call') {
-      steps.append(h('p', {}, `Asked the app: ${line.name}`));
-    } else if (line.type === 'tool_result') {
-      steps.append(
-        h(
-          'p',
-          { class: line.isError ? 'bad' : 'muted' },
-          line.isError ? 'The app answered with an error.' : 'The app answered.',
-        ),
-      );
-    } else if (line.type === 'end') {
-      status.append(` · ${line.outcome}`);
-      close();
-    }
-  });
+  const stop = listen<RunLine>(
+    `/ui/api/runs/${encodeURIComponent(id)}`,
+    (line, close) => {
+      if (line.type === 'head') {
+        status.textContent = `${line.app} · ${line.agent} · ${new Date(line.started).toLocaleString()}`;
+        steps.append(h('details', {}, h('summary', {}, 'The message'), h('pre', {}, line.message)));
+      } else if (line.type === 'event') {
+        const event = line.event;
+        if (event.type === 'text') answer.append(event.delta);
+        else if (event.type === 'break') answer.append('\n\n');
+        else if (event.type === 'activity') steps.append(h('p', { class: 'muted' }, event.label));
+        else if (event.type === 'error') steps.append(h('p', { class: 'bad' }, event.message));
+      } else if (line.type === 'tool_call') {
+        steps.append(h('p', {}, `Asked the app: ${line.name}`));
+      } else if (line.type === 'tool_result') {
+        steps.append(
+          h(
+            'p',
+            { class: line.isError ? 'bad' : 'muted' },
+            line.isError ? 'The app answered with an error.' : 'The app answered.',
+          ),
+        );
+      } else if (line.type === 'end') {
+        status.append(` · ${line.outcome}`);
+        close();
+      }
+    },
+    () => {
+      lost.textContent = 'Lost the connection to the box.';
+    },
+  );
   return { node, stop };
 }

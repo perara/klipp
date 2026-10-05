@@ -1,6 +1,10 @@
 import { h } from '../../client/ui/dom.js';
 import type { AgentStatus, LoginState } from '../logins.js';
-import { get, listen, send, type View } from './api.js';
+import { get, listen, messageOf, send, type View } from './api.js';
+
+/** Says in the card's panel what went wrong, where the user acted. */
+const refusal = (panel: HTMLElement, text: string) =>
+  panel.replaceChildren(h('p', { class: 'bad', role: 'alert' }, text));
 
 export async function agentsView(): Promise<View> {
   const node = h('section', { 'aria-label': 'Agents' });
@@ -13,6 +17,7 @@ export async function agentsView(): Promise<View> {
 
   function card(agent: AgentStatus): HTMLElement {
     const panel = h('div');
+    const fail = (error: unknown) => refusal(panel, messageOf(error));
     const box = h(
       'div',
       { class: 'card', 'data-agent': agent.id },
@@ -34,7 +39,8 @@ export async function agentsView(): Promise<View> {
               'button',
               {
                 type: 'button',
-                onclick: () => void send('POST', `/ui/api/agents/${agent.id}/logout`).then(refresh),
+                onclick: () =>
+                  void send('POST', `/ui/api/agents/${agent.id}/logout`).then(refresh).catch(fail),
               },
               'Sign out',
             )
@@ -50,24 +56,40 @@ export async function agentsView(): Promise<View> {
   }
 
   async function signIn(agent: AgentStatus, panel: HTMLElement) {
-    const started = await send<{ login: string }>('POST', `/ui/api/agents/${agent.id}/login`);
-    const login = started!.login;
-    panel.replaceChildren(h('p', { class: 'muted' }, 'Starting…'));
-    const stop = listen<LoginState>(`/ui/api/logins/${login}`, (state, close) => {
-      if (state.state === 'waiting') panel.replaceChildren(...waiting(login, state));
-      if (state.state === 'done') {
-        close();
-        void refresh();
-      }
-      if (state.state === 'failed') {
-        close();
-        panel.replaceChildren(h('p', { class: 'bad' }, state.message));
-      }
-    });
-    stops.add(stop);
+    try {
+      const started = await send<{ login: string }>('POST', `/ui/api/agents/${agent.id}/login`);
+      const login = started!.login;
+      panel.replaceChildren(h('p', { class: 'muted' }, 'Starting…'));
+      const stop = listen<LoginState>(
+        `/ui/api/logins/${login}`,
+        (state, close) => {
+          if (state.state === 'waiting') panel.replaceChildren(...waiting(login, state));
+          if (state.state === 'done') {
+            close();
+            refresh().catch((error) => refusal(panel, messageOf(error)));
+          }
+          if (state.state === 'failed') {
+            close();
+            refusal(panel, state.message);
+          }
+        },
+        () => refusal(panel, 'Lost the connection to the box.'),
+      );
+      stops.add(stop);
+    } catch (error) {
+      refusal(panel, messageOf(error));
+    }
   }
 
   function waiting(login: string, state: Extract<LoginState, { state: 'waiting' }>): Node[] {
+    // Where a refused code or cancel says so, with the form and the button still there to retry.
+    const refused = h('div', { class: 'bad', role: 'alert' });
+    const attempt = (action: () => Promise<unknown>) => {
+      refused.textContent = '';
+      action().catch((error) => {
+        refused.textContent = messageOf(error);
+      });
+    };
     const nodes: Node[] = [
       h(
         'p',
@@ -86,7 +108,9 @@ export async function agentsView(): Promise<View> {
             class: 'row',
             onsubmit: (event: Event) => {
               event.preventDefault();
-              void send('POST', `/ui/api/logins/${login}/code`, { code: input.value.trim() });
+              attempt(() =>
+                send('POST', `/ui/api/logins/${login}/code`, { code: input.value.trim() }),
+              );
             },
           },
           input,
@@ -97,9 +121,10 @@ export async function agentsView(): Promise<View> {
     nodes.push(
       h(
         'button',
-        { type: 'button', onclick: () => void send('DELETE', `/ui/api/logins/${login}`) },
+        { type: 'button', onclick: () => attempt(() => send('DELETE', `/ui/api/logins/${login}`)) },
         'Cancel',
       ),
+      refused,
     );
     return nodes;
   }

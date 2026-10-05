@@ -1,6 +1,6 @@
 import { h } from '../../client/ui/dom.js';
 import { agentsView } from './agents.js';
-import type { View } from './api.js';
+import { messageOf, type View } from './api.js';
 import { runsView } from './runs.js';
 import { CSS } from './styles.js';
 import { tokensView } from './tokens.js';
@@ -23,7 +23,10 @@ document.body.append(
 );
 
 let current: View | undefined;
+/** Counts the route changes, so only the latest one may put its view on the page. */
+let latest = 0;
 async function show() {
+  const mine = ++latest;
   const [first = '', id] = location.hash.slice(1).split('/');
   const section: Section = isSection(first) ? first : 'agents';
   for (const link of links) {
@@ -31,18 +34,20 @@ async function show() {
     else link.removeAttribute('aria-current');
   }
   current?.stop?.();
+  current = undefined;
   try {
-    current =
+    const view =
       section === 'agents'
         ? await agentsView()
         : section === 'tokens'
           ? await tokensView()
           : await runsView(id);
-    main.replaceChildren(current.node);
+    // A newer change came while this view was being built: it is not wanted any more.
+    if (mine !== latest) return view.stop?.();
+    current = view;
+    main.replaceChildren(view.node);
   } catch (error) {
-    main.replaceChildren(
-      h('p', { class: 'bad' }, error instanceof Error ? error.message : String(error)),
-    );
+    if (mine === latest) main.replaceChildren(h('p', { class: 'bad' }, messageOf(error)));
   }
 }
 addEventListener('hashchange', () => void show());

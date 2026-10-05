@@ -36,13 +36,26 @@ export async function send<T = unknown>(
   return response.status === 204 ? undefined : ((await response.json()) as T);
 }
 
-/** Server-sent events as JSON. Closing stops the browser reconnecting once the stream ends. */
+/** What went wrong, for the user. */
+export const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+/**
+ * Server-sent events as JSON. A view ends the stream itself (`close`) once it has what it was
+ * waiting for. If the stream fails or ends before that, it is closed and `onLost` is told once:
+ * the browser would otherwise keep reconnecting for ever.
+ */
 export function listen<T>(
   path: string,
   onMessage: (value: T, close: () => void) => void,
+  onLost?: () => void,
 ): () => void {
   const source = new EventSource(path);
   const close = () => source.close();
   source.onmessage = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as T, close);
+  source.onerror = () => {
+    close();
+    onLost?.();
+  };
   return close;
 }
