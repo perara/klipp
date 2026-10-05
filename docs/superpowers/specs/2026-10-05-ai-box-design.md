@@ -50,20 +50,27 @@ klipp box ─ /v1 API · setup web UI · Claude + Codex CLIs
 
 ### Shared run code
 
-The body of today's `spawnAgent`/`runTurn` becomes one function in `src/server/run.ts`:
+One seam, `Runner` in `src/server/runner.ts`, replaces the spawning inside `conversation.ts`:
 
 ```ts
-runAgent(spec: RunSpec, hooks: {
-  onEvent(event: AgentEvent): void;
-  onTool(name: string, input: Record<string, unknown>): Promise<McpResult>;
-  signal: AbortSignal;
-}): Promise<void>
+interface Runner {
+  problem(agent: AgentId): Promise<string | undefined>;
+  run(
+    request: RunRequest,
+    hooks: {
+      onEvent(event: AgentEvent): void;
+      onTool(name: string, input: Record<string, unknown>): Promise<McpResult>;
+      signal: AbortSignal;
+    },
+  ): Promise<void>;
+}
 ```
 
-It owns the run directory, the MCP bridge registration, starting the CLI, parsing its output,
-and the "stopped (exit N)" error. `RunSpec` gains `tools: McpTool[]`. Claude's
-`--allowedTools` and the bridge's tool list come from the spec instead of the fixed
-`PAGE_TOOL_NAMES`. Both Klipp's local mode and `klipp box` call it.
+`localRunner` holds today's code. It owns the readiness checks, the run directory, the MCP
+bridge registration, starting the CLI, parsing its output, and the "stopped (exit N)" error.
+`boxRunner` speaks box protocol v1. `RunSpec` and `RunRequest` carry `tools: McpTool[]`;
+Claude's `--allowedTools` and the bridge's tool list come from them instead of the fixed
+`PAGE_TOOL_NAMES`. Klipp's local mode and `klipp box` both use `localRunner`.
 
 ## Box protocol v1
 
