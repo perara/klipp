@@ -43,6 +43,7 @@ export interface RunEntry {
 }
 
 const FILE = /^[\w-]+\.jsonl$/;
+const ID = /^[\w-]+$/;
 
 function readLines(file: string): RunLine[] {
   let text: string;
@@ -85,6 +86,7 @@ export class RunLog {
   }
 
   start(head: RunHead): RunEntry {
+    if (!ID.test(head.id)) throw new Error('A run id is letters, digits, _ and - only.');
     const file = `${head.started.replace(/[:.]/g, '-')}-${head.id}.jsonl`;
     const path = join(this.dir, file);
     closeSync(openSync(path, 'a', 0o600));
@@ -97,10 +99,16 @@ export class RunLog {
       file,
     };
     this.runs.set(head.id, summary);
-    if (head.session) this.owners.set(head.session, head.app);
+    if (head.session) this.claim(head.session, head.app);
     const append = (line: RunLine) => {
       appendFileSync(path, `${JSON.stringify(line)}\n`);
-      for (const listener of this.listeners.get(head.id) ?? []) listener(line);
+      for (const listener of this.listeners.get(head.id) ?? []) {
+        try {
+          listener(line);
+        } catch {
+          this.listeners.get(head.id)?.delete(listener);
+        }
+      }
     };
     append({ type: 'head', ...head });
     this.prune();
@@ -110,10 +118,13 @@ export class RunLog {
         append(line);
       },
       end: (outcome) => {
-        append({ type: 'end', at: new Date().toISOString(), outcome });
         summary.live = false;
         summary.outcome = outcome;
-        this.listeners.delete(head.id);
+        try {
+          append({ type: 'end', at: new Date().toISOString(), outcome });
+        } finally {
+          this.listeners.delete(head.id);
+        }
       },
     };
   }
@@ -140,20 +151,33 @@ export class RunLog {
     return this.runs.get(id)?.live ?? false;
   }
 
+  /**
+   * Hears every line written from now until the run ends; a run that isn't live gives none.
+   * Call it right after `read()`, in the same tick, so no line is missed or repeated.
+   */
   follow(id: string, listener: (line: RunLine) => void): () => void {
+    if (!this.isLive(id)) return () => {};
     const set = this.listeners.get(id) ?? new Set();
     set.add(listener);
     this.listeners.set(id, set);
     return () => set.delete(listener);
   }
 
-  /** The app whose run started this agent session. */
+  /**
+   * The app whose run first claimed this agent session. `undefined` means unknown: start a
+   * new session, never resume.
+   */
   ownerOf(session: string): string | undefined {
     return this.owners.get(session);
   }
 
   private own(app: string, line: RunLine) {
-    if (line.type === 'event' && line.event.type === 'session') this.owners.set(line.event.id, app);
+    if (line.type === 'event' && line.event.type === 'session') this.claim(line.event.id, app);
+  }
+
+  /** The first app to claim a session keeps it. */
+  private claim(session: string, app: string) {
+    if (!this.owners.has(session)) this.owners.set(session, app);
   }
 
   private index(file: string) {
@@ -170,7 +194,7 @@ export class RunLog {
       file,
       ...(end?.type === 'end' ? { outcome: end.outcome } : {}),
     });
-    if (head.session) this.owners.set(head.session, head.app);
+    if (head.session) this.claim(head.session, head.app);
     for (const line of lines) this.own(head.app, line);
   }
 

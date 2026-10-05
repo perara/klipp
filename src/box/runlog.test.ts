@@ -80,4 +80,76 @@ describe('RunLog', () => {
     appendFileSync(join(data, 'runs', file!), '{broken\n');
     expect(new RunLog(data).read(h.id)!.map((l) => l.type)).toEqual(['head', 'end']);
   });
+
+  it('keeps a session with the app that claimed it first, now and after a restart', () => {
+    const data = dir();
+    const log = new RunLog(data);
+    const a = log.start(head('A'));
+    a.write({ type: 'event', at: 't', event: { type: 'session', id: 's-1' } });
+    a.end('done');
+    const b = log.start({ ...head('B'), session: 's-1' });
+    b.write({ type: 'event', at: 't', event: { type: 'session', id: 's-1' } });
+    b.end('done');
+    expect(log.ownerOf('s-1')).toBe('A');
+    expect(new RunLog(data).ownerOf('s-1')).toBe('A');
+  });
+
+  it('gives an unowned session to the run whose head names it', () => {
+    const data = dir();
+    new RunLog(data).start({ ...head('A'), session: 's-2' }).end('done');
+    const log = new RunLog(data);
+    log.start({ ...head('B'), session: 's-3' });
+    expect(log.ownerOf('s-3')).toBe('B');
+    expect(log.ownerOf('s-2')).toBe('A');
+  });
+
+  it('survives a follower that throws: the run still ends, the others still hear every line', () => {
+    const log = new RunLog(dir(), 1);
+    const h = head();
+    const entry = log.start(h);
+    let calls = 0;
+    log.follow(h.id, () => {
+      calls++;
+      throw new Error('boom');
+    });
+    const seen: RunLine['type'][] = [];
+    let liveAtEnd: boolean | undefined;
+    log.follow(h.id, (line) => {
+      seen.push(line.type);
+      if (line.type === 'end') liveAtEnd = log.isLive(h.id);
+    });
+    expect(() => {
+      entry.write({ type: 'event', at: 't', event: { type: 'text', delta: 'a' } });
+      entry.write({ type: 'event', at: 't', event: { type: 'text', delta: 'b' } });
+      entry.end('done');
+    }).not.toThrow();
+    expect(calls).toBe(1);
+    expect(seen).toEqual(['event', 'event', 'end']);
+    expect(liveAtEnd).toBe(false);
+    expect(log.isLive(h.id)).toBe(false);
+    log.start(head()).end('done');
+    expect(log.read(h.id)).toBeUndefined();
+  });
+
+  it.each(['../evil', 'a.b', 'a b', ''])(
+    'refuses the run id %j, which would be a file name',
+    (id) => {
+      const data = dir();
+      const log = new RunLog(data);
+      expect(() => log.start({ ...head(), id })).toThrow(/id/);
+      expect(readdirSync(join(data, 'runs'))).toEqual([]);
+      expect(log.list()).toEqual([]);
+    },
+  );
+
+  it('follows only a run that is live', () => {
+    const log = new RunLog(dir());
+    const h = head();
+    log.start(h).end('done');
+    const seen: RunLine['type'][] = [];
+    expect(() => log.follow(h.id, (line) => seen.push(line.type))()).not.toThrow();
+    log.follow('run-later', (line) => seen.push(line.type));
+    log.start({ ...head(), id: 'run-later' }).end('done');
+    expect(seen).toEqual([]);
+  });
 });
