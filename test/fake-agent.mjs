@@ -1,11 +1,74 @@
 // A stand-in for `claude` and `codex` in Klipp's tests. It takes the same command line, prints
 // the same JSON lines, keeps a session across runs, and calls Klipp's page tools over MCP the
 // way the real agents do. What it says follows a small script keyed on the user's words.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
+
+// Signing in, for the AI box's tests: the login is a marker file in the agent's config folder.
+const home = process.env.CLAUDE_CONFIG_DIR ?? process.env.CODEX_HOME ?? tmpdir();
+const marker = join(home, 'fake-signed-in');
+if (args[0] === '--version') {
+  console.log('9.9.9 (fake)');
+  process.exit(0);
+}
+// `claude auth status` prints JSON, and says "api_key" when an API key is what signs it in
+// (CLAUDE_FAKE_AUTH=api_key). `codex login status` says how to stderr, with exit 0 for any
+// login: CODEX_FAKE_AUTH=api_key is one with an API key.
+if (args[0] === 'auth' && args[1] === 'status') {
+  const method = process.env.CLAUDE_FAKE_AUTH ?? (existsSync(marker) ? 'claude.ai' : 'none');
+  console.log(JSON.stringify({ loggedIn: method !== 'none', authMethod: method }));
+  process.exit(method === 'none' ? 1 : 0);
+}
+if (args[0] === 'login' && args[1] === 'status') {
+  if (process.env.CODEX_FAKE_AUTH === 'api_key') {
+    console.error('Logged in using an API key - sk-proj-***ABCDE');
+    process.exit(0);
+  }
+  console.error(existsSync(marker) ? 'Logged in using ChatGPT' : 'Not logged in');
+  process.exit(existsSync(marker) ? 0 : 1);
+}
+if ((args[0] === 'auth' && args[1] === 'logout') || args[0] === 'logout') {
+  rmSync(marker, { force: true });
+  process.exit(0);
+}
+if (args[0] === 'auth' && args[1] === 'login') {
+  // The box signs in with the subscription, never the Console's API billing.
+  if (!args.includes('--claudeai')) {
+    console.error('Refusing: sign in with --claudeai');
+    process.exit(2);
+  }
+  console.log(
+    "If the browser didn't open, visit: https://claude.example/oauth/authorize?code=true",
+  );
+  process.stdout.write('Paste code here if prompted > ');
+  const code = await new Promise((done) =>
+    createInterface({ input: process.stdin }).once('line', done),
+  );
+  if (code !== 'good-code') {
+    console.error('Invalid code');
+    process.exit(1);
+  }
+  writeFileSync(marker, '');
+  console.log('Login successful.');
+  process.exit(0);
+}
+if (args[0] === 'login' && args[1] === '--device-auth') {
+  writeFileSync(join(home, 'login.pid'), String(process.pid));
+  console.log('1. Open this link\n   \x1b[94mhttps://auth.example/codex/device\x1b[0m');
+  console.log('2. Enter this one-time code\n   \x1b[94mABCD-EFGH\x1b[0m');
+  await new Promise((done) => setTimeout(done, Number(process.env.CODEX_FAKE_DEVICE_MS ?? 300)));
+  if (process.env.CODEX_FAKE_DEVICE_ERROR) {
+    console.error(process.env.CODEX_FAKE_DEVICE_ERROR);
+    process.exit(1);
+  }
+  writeFileSync(marker, '');
+  console.log('Successfully logged in');
+  process.exit(0);
+}
 
 // `codex sandbox -- true`: Klipp's check that Codex's sandbox can run. CODEX_FAKE_SANDBOX=broken
 // fails it the way a locked-down container does.
@@ -186,6 +249,29 @@ if (q.includes('what did i say')) {
   else
     out({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: session });
   process.exit(0);
+} else if (q.includes('linger')) {
+  // Answers, then stays on ("linger <ms>") before it exits by itself, which it notes. A CLI
+  // that is stopped first never gets to.
+  say('Bye for now.');
+  if (codex) out({ type: 'turn.completed', usage: {} });
+  else
+    out({ type: 'result', subtype: 'success', is_error: false, result: '', session_id: session });
+  await new Promise((done) => setTimeout(done, Number(/linger (\d+)/.exec(q)?.[1] ?? 500)));
+  writeFileSync(memory, 'lingered');
+  process.exit(0);
+} else if (q.includes('api key')) {
+  // Keys bill an account, not the subscription: the box keeps them from the agents.
+  const keys = [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'OPENAI_API_KEY',
+    'CODEX_API_KEY',
+  ];
+  const seen = [...keys, 'CLAUDE_CODE_OAUTH_TOKEN'].filter((name) => process.env[name]);
+  say(`visible: ${seen.join(', ') || 'none'}`);
 } else if (q.includes('environment')) {
   // What a run is given: the dev server's own secrets stay out.
   say(`DATABASE_URL: ${process.env.DATABASE_URL ? 'visible' : 'hidden'}`);

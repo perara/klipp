@@ -27,6 +27,16 @@ export function isLocal(req: IncomingMessage): boolean {
   return LOCAL_HOST.test(hostOf(req) ?? '');
 }
 
+/** Exactly the loopback names, on any port: no `*.localhost`, which a resolver may not pin. */
+const LOOPBACK_NAME = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
+
+/**
+ * Asked for by one of the names that mean this machine (`localhost`, `127.0.0.1`, `[::1]`),
+ * whatever the socket: the AI box's web UI behind a published loopback port or `ssh -L`. A page
+ * that rebinds its own name, even a `*.localhost` one, can't pass.
+ */
+export const isLocalName = (req: IncomingMessage): boolean => LOOPBACK_NAME.test(hostOf(req) ?? '');
+
 /**
  * Sent by Klipp's runtime from the page itself: with Klipp's header, which a cross-site form
  * can't add, and an `Origin` (when there is one) naming the address the request went to.

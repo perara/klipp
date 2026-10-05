@@ -74,7 +74,7 @@ when the project allows it, so allow it for your project's own dependencies firs
 
 ```bash
 npm config set allow-remote root --location=project
-npm install -D https://github.com/perara/klipp/releases/download/v0.7.0/klipp-0.7.0.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.8.0/klipp-0.8.0.tgz
 ```
 
 The first line writes `allow-remote=root` to the project's `.npmrc`; commit it with the lockfile,
@@ -244,6 +244,98 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
   never what anyone typed. `klipp serve --help` lists its settings; `klipp/server` has the same
   as `serve()` and `createKlippMiddleware()`.
 
+## The AI box
+
+The agents as a service. `klipp box` is one place for the Claude Code and Codex logins, a web page
+to sign them in, tokens for the apps that use them, and the runs to watch, live or afterwards.
+Apps ask it for answers over HTTP, so an app's own server needs no CLIs and no logins.
+
+```bash
+KLIPP_ROOT=~/code/app npx klipp box   # then open http://127.0.0.1:8790/
+```
+
+On its page, sign Claude and Codex in with their own CLIs (a link, then a pasted code or a device
+code), check that each is ready, make a token for each app, and read its runs. Settings:
+`KLIPP_ROOT` (the repository the agents read, read-only; default the working directory),
+`KLIPP_BOX_HOST` (`127.0.0.1`) and `KLIPP_BOX_PORT` (`8790`), `KLIPP_BOX_DATA` (logins, tokens and
+run logs; `~/.klipp-box`), `KLIPP_BOX_TOKENS` (`name=token,…`, besides the ones made on the
+page), `KLIPP_MAX_RUNS` (`2`) and `KLIPP_MODEL`. `klipp box --help` lists them.
+
+**Pointing an app at it.** In the Vite plugin, `chat: { box: { url: 'http://127.0.0.1:8790' } }`,
+with `KLIPP_BOX_TOKEN` in `.env`; `KLIPP_BOX_URL` can name the address instead of the config. For
+`klipp serve`, set `KLIPP_BOX_URL` and `KLIPP_BOX_TOKEN`. With a box, the agents run there, not
+on the app's machine; the page's tools still run in the user's browser.
+
+**In a container:**
+
+- Set `KLIPP_BOX_HOST=0.0.0.0` so the published port reaches the box, and keep that port on
+  loopback: publish it only on the host's `127.0.0.1`, or put the box on a Docker network shared
+  only with the apps that call it. The page has no sign-in and shares its port with `/v1`, so
+  whoever can reach the port can use the page.
+- Put `/data` (`KLIPP_BOX_DATA`) on a volume, and mount the source read-only.
+- Codex needs the same seccomp and AppArmor changes as under
+  [On a shared server](#on-a-shared-server).
+- The page answers only to localhost names, so reach it through
+  `ssh -L 8790:<box>:8790 <host>` and open `http://127.0.0.1:8790/`.
+
+**What it keeps and refuses:**
+
+- **The page answers only to localhost names, and only to its own page.** The page and its
+  `/ui/api/` answer requests for `localhost`, `127.0.0.1` or `[::1]` and refuse any other name
+  with 403. Changes (signing in, tokens) also need the header the page itself sends, which another
+  website can't add. That stops other websites and DNS rebinding.
+- **The page has no sign-in.** It checks the name a request asks for, not who connected: anyone
+  who can reach the port can ask for `localhost` and make tokens or sign the agents out. Keep the
+  port on loopback, or on a Docker network shared only with the apps that call the box. An app's
+  token guards `/v1`, not the page.
+- **No API keys from the environment.** `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `OPENAI_API_KEY` and `CODEX_API_KEY` are removed from what the agents get, and so are the
+  switches to Bedrock, Vertex or another endpoint (`CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_BASE_URL`). A login with an API key (or Codex's with
+  Amazon Bedrock) doesn't count as signed in.
+- **Tokens are stored hashed.** A new token is shown once; only its SHA-256 is kept.
+- **Run logs are private.** The data folder is mode 0700. The box's own files (the tokens and
+  each run's log) are 0600; the CLIs' login files in `claude/` and `codex/` keep the modes the
+  CLIs give them, inside those 0700 folders. A run is one file with the app's name, the message,
+  every event and each tool call with its answer; the newest 200 are kept.
+- **Read-only agents,** as everywhere else in Klipp. A caller can't change the repository, the
+  sandbox or the environment.
+
+**Protocol v1.** Every request carries `Authorization: Bearer <token>`; a missing or unknown token
+gets 401.
+
+| Endpoint                         | What it does                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------------- |
+| `GET /v1/agents`                 | Per agent: `available`, with a `problem` (not signed in is one), and the `preferred` one. |
+| `POST /v1/runs`                  | Starts a run and streams it as NDJSON; body below.                                        |
+| `POST /v1/runs/:run/tools/:call` | Answers a tool call with `{ "content": "…", "isError"?: true }`; 204.                     |
+
+A run is `{ agent, system, message, session?, model?, tools }`. `tools` are the page tools the app
+answers: up to 16, each `{ name, description, inputSchema }` with a name like `point_at_element`.
+`system` is at most 64 KiB and `message` 256 KiB. Before the stream starts: 400 for a bad request,
+409 when the agent isn't ready, 429 when `KLIPP_MAX_RUNS` runs are going. Otherwise 200 and one JSON
+object per line:
+
+- `{"type":"run","id":"<run>"}` first.
+- `{"type":"session","id":"<session>"}`: the agent's session, to send as `session` next time.
+- `{"type":"text","delta":"…"}` for the answer as it comes, and `{"type":"break"}` where one
+  paragraph of it ends and another begins.
+- `{"type":"activity","label":"…"}` for what the agent is doing, such as reading a file.
+- `{"type":"tool_call","id":"<call>","name":"…","input":{…}}` when the agent calls one of the run's
+  tools. The app answers it at `/v1/runs/:run/tools/:call` with `{ "content": "…" }` (and
+  `"isError": true` for a failure) within 30 minutes.
+- `{"type":"error","message":"…"}` when the run fails, and `{"type":"done"}` when it ends well.
+- An empty line every 15 seconds, to keep the stream alive.
+
+The stream ends after `done` or `error`, and the CLI then has 10 seconds to exit by itself. If the
+caller closes the stream before its end, the run is stopped and any pending tool call is answered
+"The turn ended." A `session` continues only for the app (the token's name) that started it; for
+any other app, the run starts a new session.
+
+**One person's box.** It signs in with your own Claude and ChatGPT subscriptions. Anthropic's terms
+don't allow routing other people's requests through a subscription, so give the box only to apps
+that you alone use, or use API keys with the apps other people use.
+
 ## Options
 
 | Option                    | Default                           | What it does                                                           |
@@ -256,6 +348,7 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
 | `chat.pairingCode`        | random per start                  | A fixed pairing code (10+ characters), for a shared test environment.  |
 | `chat.passEnv`            | `[]`                              | More environment variables to pass to the agent, by name.              |
 | `chat.maxRuns`            | `4`                               | Agent runs at once, across all conversations.                          |
+| `chat.box`                | none                              | Run the agents in an [AI box](#the-ai-box): `{ url, token? }`.         |
 | `chat`                    | `{}`                              | `false` turns the chat off and keeps pointing and links.               |
 | `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for the hotkey only.              |
 | `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there.        |
@@ -286,7 +379,7 @@ talks, leans in while you point, and droops when something goes wrong.
 
 ```bash
 npm run check        # format, build, lint, typecheck, unit tests and package exports (CI `check`)
-npm run test:e2e     # the example app under the dev server, a production build, touch, and a paired device
+npm run test:e2e     # the example app under the dev server, a production build, touch, a paired device, and the AI box
 npm run test:compat  # the packed package against Vite 5, 6, 7 and 8
 npm run demo:record  # re-record the demo GIF above (needs ffmpeg)
 ```

@@ -7,6 +7,27 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-05
+
+### Added
+
+- `klipp box`: the AI box. Claude Code and Codex as a service, with box protocol v1 for apps
+  (Bearer tokens; streamed runs; tool calls the app answers) and a web page at localhost to sign
+  the agents in with their own CLIs, check them, make and revoke tokens, and watch runs live or
+  afterwards. The page answers only to localhost names and to its own page, which stops other
+  websites and DNS rebinding; it has no sign-in, so keep the port on loopback or on a network
+  only the calling apps share. API keys and the Bedrock, Vertex and base-URL switches are
+  removed from the agents' environment, and a login with an API key doesn't count as signed in.
+  Logins, tokens and run logs stay in its private data folder; only the hash of each token is
+  kept, and the newest 200 run logs.
+- `chat.box` in the Vite plugin, `box` for `createKlippMiddleware()` and `serve()` in
+  `klipp/server`, and `KLIPP_BOX_URL`/`KLIPP_BOX_TOKEN` for `klipp serve`: run the agents in a box,
+  so the app's server needs no CLIs or logins.
+
+### Changed
+
+- The MCP bridge offers each run its own tools, and Claude is allowed exactly those.
+
 ## [0.7.0] - 2026-10-05
 
 ### Added
@@ -201,7 +222,8 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/perara/klipp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/perara/klipp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/perara/klipp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/perara/klipp/compare/v0.5.0...v0.6.0

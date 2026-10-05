@@ -1,3 +1,4 @@
+import type { McpTool } from './mcp.js';
 import { TICKET_SCHEMA } from '../shared/ticket.js';
 
 /** Fixed text; everything that changes arrives in the messages. */
@@ -30,7 +31,7 @@ How to talk:
 - Be warm and a little playful, the way a helpful paperclip would be, but get to a good ticket quickly.`;
 
 /** The tools the browser answers, as the agent sees them through MCP. */
-export const PAGE_TOOLS = [
+export const PAGE_TOOLS: McpTool[] = [
   {
     name: 'point_at_element',
     description:

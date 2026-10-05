@@ -20,11 +20,19 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/client/**', 'examples/react-app/src/**'],
+    files: ['src/client/**', 'src/box/ui/**', 'examples/react-app/src/**'],
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['**/*.mjs', '**/*.js', 'src/vite/**', 'src/server/**', 'e2e/**', '*.config.ts'],
+    files: [
+      '**/*.mjs',
+      '**/*.js',
+      'src/box/*.ts',
+      'src/vite/**',
+      'src/server/**',
+      'e2e/**',
+      '*.config.ts',
+    ],
     languageOptions: { globals: globals.node },
   },
   {

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { AgentId } from '../shared/protocol.js';
+import type { McpTool } from './mcp.js';
 
 export interface RunSpec {
   /** The repository root: the agent works there, read-only. */
@@ -20,6 +21,8 @@ export interface RunSpec {
   model?: string;
   /** Directories the agent's own install lives in, which its sandbox must be able to read. */
   install: string[];
+  /** Tools the caller answers, offered over MCP; Claude is allowed exactly these. */
+  tools: McpTool[];
 }
 
 export type AgentEvent =
@@ -47,11 +50,12 @@ export interface Agent {
   ready?(command: string[], root: string, env: NodeJS.ProcessEnv): Promise<string | undefined>;
   /** Written to the process's stdin, which is then closed. */
   input(spec: RunSpec): string;
-  /** A parser for one run's stdout, one JSON line at a time. */
-  parser(root: string): (line: string) => AgentEvent[];
+  /**
+   * A parser for one run's stdout, one JSON line at a time. `loginHint` ends an error from a
+   * failed login, in place of the agent's own advice for a terminal.
+   */
+  parser(root: string, loginHint?: string): (line: string) => AgentEvent[];
 }
-
-const PAGE_TOOL_NAMES = ['point_at_element', 'inspect_element', 'propose_ticket'];
 
 /** Files Claude never reads, even when git tracks them. */
 const SECRET_FILES = [
@@ -181,7 +185,7 @@ export const claude: Agent = {
       'Read',
       'Grep',
       'Glob',
-      ...PAGE_TOOL_NAMES.map((name) => `mcp__klipp__${name}`),
+      ...spec.tools.map((tool) => `mcp__klipp__${tool.name}`),
     ];
   },
   // The token stays out of the process list: the config is a file only this user can read.
@@ -201,7 +205,7 @@ export const claude: Agent = {
   // Its login, and the settings for running it through Bedrock, Vertex or a gateway.
   envPrefixes: ['ANTHROPIC_', 'CLAUDE_', 'AWS_', 'GOOGLE_', 'CLOUD_ML_', 'VERTEX_'],
   input: (spec) => spec.message,
-  parser(root) {
+  parser(root, loginHint = ' Run `claude` in a terminal and log in, then try again.') {
     let wrote = false;
     return (line) => {
       const event = parse(line);
@@ -245,9 +249,7 @@ export const claude: Agent = {
       if (event.type === 'result') {
         if (!event.is_error) return [{ type: 'done' }];
         const message = text(event.result) || 'Claude stopped with an error.';
-        const hint = LOGIN_HINT.test(message)
-          ? ' Run `claude` in a terminal and log in, then try again.'
-          : '';
+        const hint = LOGIN_HINT.test(message) ? loginHint : '';
         return [{ type: 'error', message: `${message}${hint}` }];
       }
       return [];
@@ -358,7 +360,7 @@ export const codex: Agent = {
   install: (command) => codexInstall(command),
   ready: codexSandboxWorks,
   input: (spec) => spec.message,
-  parser() {
+  parser(_root, loginHint = ' Run `codex login` in a terminal, then try again.') {
     let wrote = false;
     return (line) => {
       const event = parse(line);
@@ -392,9 +394,7 @@ export const codex: Agent = {
         const error = isRecord(event.error) ? event.error : {};
         const message =
           text(error.message) || text(event.message) || 'Codex stopped with an error.';
-        const hint = LOGIN_HINT.test(message)
-          ? ' Run `codex login` in a terminal, then try again.'
-          : '';
+        const hint = LOGIN_HINT.test(message) ? loginHint : '';
         return [{ type: 'error', message: `${message}${hint}` }];
       }
       return [];

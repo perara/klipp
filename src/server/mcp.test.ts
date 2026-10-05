@@ -1,18 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { McpBridge } from './mcp.js';
 
-const bridge = new McpBridge(
-  [{ name: 'echo', description: 'Echoes.', inputSchema: { type: 'object', properties: {} } }],
-  '1.2.3',
-);
+const ECHO = [
+  { name: 'echo', description: 'Echoes.', inputSchema: { type: 'object', properties: {} } },
+];
+const bridge = new McpBridge('1.2.3');
 const calls: Array<[string, Record<string, unknown>]> = [];
 
 beforeAll(async () => {
   await bridge.start();
-  bridge.register('c1', (name, args) => {
-    calls.push([name, args]);
-    return Promise.resolve({ text: `echo ${typeof args.word === 'string' ? args.word : '?'}` });
-  });
+  bridge.register(
+    'c1',
+    (name, args) => {
+      calls.push([name, args]);
+      return Promise.resolve({ text: `echo ${typeof args.word === 'string' ? args.word : '?'}` });
+    },
+    ECHO,
+  );
 });
 afterAll(() => bridge.close());
 
@@ -118,5 +122,22 @@ describe('McpBridge', () => {
       { jsonrpc: '2.0', method: 'notifications/initialized' },
     ]);
     expect(await answer.json()).toEqual([{ jsonrpc: '2.0', id: 7, result: {} }]);
+  });
+
+  it('offers each run only the tools it was registered with', async () => {
+    bridge.register('c3', () => Promise.resolve({ text: 'other' }), [
+      { name: 'other', description: 'Other.', inputSchema: { type: 'object' } },
+    ]);
+    const list = (await (
+      await post({ jsonrpc: '2.0', id: 10, method: 'tools/list' }, 'c3')
+    ).json()) as {
+      result: { tools: Array<{ name: string }> };
+    };
+    expect(list.result.tools.map((t) => t.name)).toEqual(['other']);
+    const refused = (await (
+      await post({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'echo' } }, 'c3')
+    ).json()) as { error: { code: number } };
+    expect(refused.error.code).toBe(-32602);
+    bridge.unregister('c3');
   });
 });

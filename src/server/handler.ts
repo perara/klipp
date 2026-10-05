@@ -12,13 +12,15 @@ import type {
   ToolResultRequest,
 } from '../shared/protocol.js';
 import { DEFAULT_LABELS, ticketBody, type TicketType } from '../shared/ticket.js';
-import { AGENTS, onPath } from './agents.js';
+import { AGENTS } from './agents.js';
+import { boxRunner, type BoxConnection } from './box-client.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
+import { json, readJson } from './http.js';
 import { Identity, type IdentityOptions } from './identity.js';
 import { McpBridge } from './mcp.js';
-import { PAGE_TOOLS } from './prompt.js';
+import { localRunner, WINDOWS, type Runner } from './runner.js';
 
 export interface KlippServerOptions {
   /** The repository root the agent works in, read-only. */
@@ -35,6 +37,11 @@ export interface KlippServerOptions {
   commands?: Partial<Record<AgentId, string[]>>;
   /** More of the dev server's environment variables to pass to the agent, by name. */
   passEnv?: string[];
+  /**
+   * Run the agents in an AI box (`klipp box`) instead of on this machine: its address and the
+   * token it knows this app by. This machine then needs no agent CLIs or logins.
+   */
+  box?: BoxConnection | undefined;
   /** Environment for the GitHub token lookup. */
   env?: Record<string, string | undefined>;
   /** GitHub labels per ticket type. Default: bug, enhancement, suggestion, question; each with klipp. */
@@ -84,34 +91,17 @@ export interface KlippMiddleware {
 /** GitHub refuses issue bodies over 65,536 characters; the ticket needs room too. */
 const MAX_FOOTER = 16_000;
 
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'no-store');
-  res.end(JSON.stringify(body));
-}
-
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > 1_000_000) throw new Error('too large');
-    chunks.push(chunk as Buffer);
-  }
-  const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Expected a JSON object.');
-  }
-  return value as Record<string, unknown>;
-}
-
-const WINDOWS =
-  "Klipp's chat runs the agents on macOS and Linux. On Windows, run the dev server in WSL.";
-
 /** Connect-style middleware: the chat, page-tool answers, issue filing, and (in development) the manifest. */
 export function createKlippMiddleware(options: KlippServerOptions): KlippMiddleware {
-  const bridge = new McpBridge(PAGE_TOOLS, options.version);
+  const bridge = new McpBridge(options.version);
+  const runner: Runner = options.box
+    ? boxRunner(options.box)
+    : localRunner({
+        root: options.root,
+        bridge,
+        commands: options.commands,
+        passEnv: options.passEnv,
+      });
   const conversations = new Conversations();
   const runs = new Set<AbortController>();
   const identity = options.identity ? new Identity(options.identity) : undefined;
@@ -124,33 +114,12 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     const who = identity?.userOf(req);
     return who && 'user' in who ? who.user : undefined;
   };
-  const command = (agent: AgentId) => options.commands?.[agent] ?? [AGENTS[agent].binary];
-  const windows = process.platform === 'win32' && !options.commands;
-
-  /** Each agent's own check, such as Codex's sandbox, runs once; installing it is checked each time. */
-  const readiness = new Map<AgentId, Promise<string | undefined>>();
-  function problemOf(id: AgentId): Promise<string | undefined> {
-    if (windows) return Promise.resolve(WINDOWS);
-    const [binary] = command(id);
-    if (!onPath(binary!)) {
-      return Promise.resolve(
-        `I can't find \`${AGENTS[id].binary}\` on this machine. Install it and log in, then restart the server.`,
-      );
-    }
-    const agent = AGENTS[id];
-    if (!agent.ready) return Promise.resolve(undefined);
-    let ready = readiness.get(id);
-    if (!ready) {
-      ready = agent.ready(command(id), options.root, process.env);
-      readiness.set(id, ready);
-    }
-    return ready;
-  }
+  const windows = !options.box && process.platform === 'win32' && !options.commands;
 
   async function agents(): Promise<AgentsResponse> {
     const list = await Promise.all(
       (Object.keys(AGENTS) as AgentId[]).map(async (id) => {
-        const problem = await problemOf(id);
+        const problem = await runner.problem(id);
         return {
           id,
           label: AGENTS[id].label,
@@ -188,7 +157,6 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     ) {
       return json(res, 400, { error: 'A chat message needs an agent, text and the page.' });
     }
-    await bridge.start();
     const user = userOf(req);
     const conversation = conversations.get(
       typeof request.conversation === 'string' ? request.conversation : undefined,
@@ -221,15 +189,12 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
         if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
       };
       emit({ type: 'conversation', id: conversation.id });
-      const problem = await problemOf(agent);
+      const problem = await runner.problem(agent);
       if (problem) return emit({ type: 'error', message: problem });
       await runTurn(conversation, request.text, request.page, {
-        agent: AGENTS[agent],
-        command: command(agent),
-        root: options.root,
-        bridge,
+        runner,
+        agent,
         ...(options.model ? { model: options.model } : {}),
-        ...(options.passEnv ? { passEnv: options.passEnv } : {}),
         emit,
         signal: aborted.signal,
       });

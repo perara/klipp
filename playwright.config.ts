@@ -4,6 +4,9 @@ const DEV = 'http://127.0.0.1:5281/';
 const BUILD = 'http://127.0.0.1:5282/sub/';
 /** The dev server as another device sees it: by a name that isn't localhost. */
 const REMOTE = 'http://laptop.test:5283/';
+/** The AI box for the tests; test/box-server.mjs and e2e/box.spec.ts read the same variable. */
+const BOX_PORT = process.env.KLIPP_BOX_PORT ?? '5284';
+const BOX = `http://127.0.0.1:${BOX_PORT}/`;
 const permissions = ['clipboard-read', 'clipboard-write'];
 // Software WebGL, for the map and the 3D scene on runners without a GPU.
 const launchOptions = { args: ['--enable-unsafe-swiftshader'] };
@@ -35,22 +38,46 @@ export default defineConfig({
       url: 'http://127.0.0.1:5283/',
       reuseExistingServer: false,
     },
+    {
+      command: 'node test/box-server.mjs',
+      url: `${BOX}healthz`,
+      reuseExistingServer: false,
+      // Playwright would SIGKILL it: this way it removes its data folder.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
+    },
+    {
+      // The example app with its agents in the box above: the whole chain, end to end.
+      command: 'npx vite examples/react-app --host 127.0.0.1 --port 5285 --strictPort',
+      env: { KLIPP_BOX_URL: BOX.replace(/\/$/, ''), KLIPP_BOX_TOKEN: 'e2e-box-token-0123456789' },
+      url: 'http://127.0.0.1:5285/',
+      reuseExistingServer: false,
+    },
   ],
   projects: [
     {
       name: 'dev',
-      testIgnore: /touch|remote/,
+      testIgnore: /touch|remote|box/,
       use: { ...devices['Desktop Chrome'], baseURL: DEV, permissions, launchOptions },
     },
     {
       name: 'build',
-      testIgnore: /touch|remote/,
+      testIgnore: /touch|remote|box/,
       use: { ...devices['Desktop Chrome'], baseURL: BUILD, permissions, launchOptions },
     },
     {
       name: 'touch',
       testMatch: /touch/,
       use: { ...devices['Pixel 7'], baseURL: DEV, permissions },
+    },
+    {
+      name: 'box',
+      testMatch: /box/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: BOX,
+        permissions,
+        launchOptions,
+      },
     },
     {
       name: 'remote',
