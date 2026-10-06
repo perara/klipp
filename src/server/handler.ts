@@ -15,7 +15,7 @@ import { DEFAULT_LABELS, ticketBody, type TicketType } from '../shared/ticket.js
 import { AGENTS } from './agents.js';
 import { boxRunner, type BoxConnection } from './box-client.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
-import { fileGitHubIssue, githubToken } from './github.js';
+import { fileGitHubIssue, githubToken, newIssueLink } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
 import { json, readJson } from './http.js';
 import { Identity, type IdentityOptions } from './identity.js';
@@ -78,6 +78,8 @@ export type KlippLogEntry =
       outcome: 'answered' | 'failed' | 'stopped';
     }
   | { event: 'filed'; user?: string | undefined; url: string }
+  /** No GitHub token: the user was handed the ticket to submit on GitHub themselves. */
+  | { event: 'prefilled'; user?: string | undefined }
   | { event: 'limited'; user: string };
 
 export interface KlippMiddleware {
@@ -136,13 +138,17 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     return { agents: list, preferred, ...(windows ? { problem: WINDOWS } : {}) };
   }
 
-  const fileIssue =
-    options.fileIssue ??
-    (async (draft: IssueDraft, labels: string[]) => {
-      if (!options.repo) throw new Error('No GitHub repository is known for this app.');
-      const token = githubToken(options.repo, options.env ?? process.env);
-      return fileGitHubIssue(options.repo, draft, token, labels);
-    });
+  async function fileIssue(
+    draft: IssueDraft,
+    labels: string[],
+  ): Promise<Exclude<IssueResponse, { error: string }>> {
+    if (options.fileIssue) return { url: await options.fileIssue(draft, labels) };
+    if (!options.repo) throw new Error('No GitHub repository is known for this app.');
+    const token = githubToken(options.repo, options.env ?? process.env);
+    // No token for github.com: the user submits it there, signed in as themselves.
+    if (!token) return { submit: newIssueLink(options.repo, draft, labels) };
+    return { url: await fileGitHubIssue(options.repo, draft, token, labels) };
+  }
   const labelsFor = (type: TicketType): string[] => options.labels?.[type] ?? DEFAULT_LABELS[type];
 
   async function chat(req: IncomingMessage, res: ServerResponse) {
@@ -226,7 +232,10 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     json(res, delivered ? 200 : 404, { delivered });
   }
 
-  /** Files a ticket the agent proposed and the user is looking at, once. */
+  /**
+   * Files a ticket the agent proposed and the user is looking at, once; or, with no GitHub
+   * token, hands it back once as a filled-in new-issue link for the user to submit.
+   */
   async function issue(req: IncomingMessage, res: ServerResponse) {
     const request = (await readJson(req)) as Partial<IssueRequest>;
     const user = userOf(req);
@@ -247,9 +256,10 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
       const reporter = user ? `\n\nReported by ${user.replace(/[\\`*_[\]()<>#|]/g, '\\$&')}.` : '';
       const body = `${ticketBody(ticket)}\n\n${request.footer}${reporter}`;
       const draft = { title: ticket.title, body, type: ticket.type };
-      const url = await fileIssue(draft, labelsFor(ticket.type));
-      log({ event: 'filed', user, url });
-      json(res, 200, { url } satisfies IssueResponse);
+      const filed = await fileIssue(draft, labelsFor(ticket.type));
+      // The link carries the ticket's text, so it stays out of the log.
+      log('url' in filed ? { event: 'filed', user, url: filed.url } : { event: 'prefilled', user });
+      json(res, 200, filed satisfies IssueResponse);
     } catch (error) {
       // Still there to file once whatever went wrong is fixed.
       if (conversation.pending.has(proposal)) conversation.proposals.set(proposal, ticket);

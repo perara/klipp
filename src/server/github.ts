@@ -8,12 +8,13 @@ const GITHUB = 'github.com';
  * `GITHUB_TOKEN` or `GH_TOKEN`; for a GitHub Enterprise host, `GH_ENTERPRISE_TOKEN` or
  * `GITHUB_ENTERPRISE_TOKEN` when `GH_HOST` names it. Otherwise the GitHub CLI's login for that
  * host. A remote on GitLab or anywhere else gets no token, so nothing is sent there.
+ * Undefined for github.com without one: the user then submits the issue there themselves.
  */
 export function githubToken(
   repo: string,
   env: Record<string, string | undefined>,
   login: (host: string) => string | undefined = ghLogin,
-): string {
+): string | undefined {
   const host = new URL(repo).host;
   const token =
     host === GITHUB
@@ -22,11 +23,9 @@ export function githubToken(
         ? (env.GH_ENTERPRISE_TOKEN ?? env.GITHUB_ENTERPRISE_TOKEN)
         : undefined;
   const found = token || login(host);
-  if (found) return found;
+  if (found || host === GITHUB) return found || undefined;
   throw new Error(
-    host === GITHUB
-      ? 'No GitHub token: log in with `gh auth login` or set GITHUB_TOKEN.'
-      : `Klipp files issues on GitHub, and has no login for ${host}. For GitHub Enterprise, log in with \`gh auth login --hostname ${host}\`.`,
+    `Klipp files issues on GitHub, and has no login for ${host}. For GitHub Enterprise, log in with \`gh auth login --hostname ${host}\`.`,
   );
 }
 
@@ -43,13 +42,47 @@ function ghLogin(host: string): string | undefined {
   }
 }
 
-/** `https://github.com/owner/repo` → the REST address for its issues; GitHub Enterprise keeps its own host. */
-export function issuesEndpoint(repo: string): string {
+/** `https://github.com/owner/repo` → its address and `owner/repo`. */
+function parseRepo(repo: string): { url: URL; path: string } {
   const url = new URL(repo);
   const [owner, name] = url.pathname.slice(1).split('/');
   if (!owner || !name) throw new Error(`${repo} is not a repository address.`);
+  return { url, path: `${owner}/${name}` };
+}
+
+/** `https://github.com/owner/repo` → the REST address for its issues; GitHub Enterprise keeps its own host. */
+export function issuesEndpoint(repo: string): string {
+  const { url, path } = parseRepo(repo);
   const api = url.host === GITHUB ? 'https://api.github.com' : `${url.origin}/api/v3`;
-  return `${api}/repos/${owner}/${name}/issues`;
+  return `${api}/repos/${path}/issues`;
+}
+
+/** Browsers and GitHub take addresses up to about 8,000 characters. */
+const MAX_LINK = 8_000;
+const CUT = '\n\n_Cut short to fit in a link. The whole ticket is in the Klipp chat._';
+
+/**
+ * GitHub's new-issue page for the repository, filled in, for a user signed in there to submit.
+ * A body too long for the address is cut short, with a note saying so.
+ */
+export function newIssueLink(repo: string, draft: IssueDraft, labels: string[] = []): string {
+  const { url, path } = parseRepo(repo);
+  const link = (body: string) => {
+    const query = new URLSearchParams({ title: draft.title, body });
+    if (labels.length) query.set('labels', labels.join(','));
+    return `${url.origin}/${path}/issues/new?${query}`;
+  };
+  if (link(draft.body).length <= MAX_LINK) return link(draft.body);
+  // The longest start of the body, by whole characters, whose link fits with the note.
+  const chars = Array.from(draft.body);
+  const fits = (n: number) => link(chars.slice(0, n).join('') + CUT).length <= MAX_LINK;
+  let [low, high] = [0, chars.length];
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (fits(mid)) low = mid;
+    else high = mid - 1;
+  }
+  return link(chars.slice(0, low).join('') + CUT);
 }
 
 /** Files the issue and returns its address. */

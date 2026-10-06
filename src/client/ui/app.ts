@@ -378,9 +378,25 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
     card.filing();
     try {
-      const url = await fileIssue(config.endpoint, { conversation, proposal: id, footer: details });
-      card.filed(url);
-      return { id, content: `Filed: ${url}` };
+      const filed = await fileIssue(config.endpoint, {
+        conversation,
+        proposal: id,
+        footer: details,
+      });
+      if ('submit' in filed) {
+        // The server has no GitHub token: the user submits it there, signed in as themselves.
+        if (!/^https:\/\//.test(filed.submit))
+          throw new Error('No GitHub address to submit it at.');
+        window.open(filed.submit, '_blank', 'noopener');
+        card.submitOnGitHub(filed.submit);
+        return {
+          id,
+          content:
+            'Not filed yet: GitHub opened in a new tab with the ticket filled in, for the user to submit there.',
+        };
+      }
+      card.filed(filed.url);
+      return { id, content: `Filed: ${filed.url}` };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       card.failed(message);

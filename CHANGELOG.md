@@ -7,6 +7,15 @@ behaviour or options.
 
 ## [Unreleased]
 
+### Changed
+
+- A ticket is never lost for want of a GitHub token. With no token for a github.com repository
+  (no `KLIPP_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, and no `gh` login), filing opens
+  GitHub's new-issue page in a new tab, filled in with the ticket's title, body and labels, for
+  the user to submit signed in as themselves. The server hands it back once, from the ticket it
+  holds, as it files one; a body too long for a link is cut short with a note. So `klipp serve`
+  needs no token, and logs these as `prefilled`. GitHub Enterprise and other hosts are unchanged.
+
 ## [0.8.0] - 2026-10-05
 
 ### Added

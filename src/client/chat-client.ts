@@ -70,8 +70,14 @@ export async function answerTool(endpoint: string, result: ToolResultRequest): P
   }).catch(() => undefined);
 }
 
-/** Files the ticket the agent proposed, through the server, and returns its address. */
-export async function fileIssue(endpoint: string, request: IssueRequest): Promise<string> {
+/**
+ * Files the ticket the agent proposed, through the server: its address, or the filled-in
+ * new-issue page to submit on GitHub when the server has no token.
+ */
+export async function fileIssue(
+  endpoint: string,
+  request: IssueRequest,
+): Promise<Exclude<IssueResponse, { error: string }>> {
   const response = await fetch(`${endpoint}issue`, {
     method: 'POST',
     headers: HEADERS,
@@ -81,8 +87,8 @@ export async function fileIssue(endpoint: string, request: IssueRequest): Promis
   const result = (await response
     .json()
     .catch(() => ({ error: `The server answered ${response.status}.` }))) as IssueResponse;
-  if ('url' in result) return result.url;
-  throw new Error(result.error);
+  if ('error' in result) throw new Error(result.error);
+  return result;
 }
 
 /** Pairs this device with the dev server, which then answers it as it does localhost. */
