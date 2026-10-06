@@ -32,6 +32,7 @@ export function positive(name: string, value: string | undefined, fallback: numb
  *   agent, comma-separated.
  * - `KLIPP_BOX_URL` and `KLIPP_BOX_TOKEN`: run the agents in an AI box (`klipp box`).
  * - GitHub: `KLIPP_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, else the GitHub CLI's login.
+ *   Without any, tickets open on GitHub, filled in, for the tester to submit.
  */
 export function optionsFromEnv(env: NodeJS.ProcessEnv, cwd: string): ServeOptions {
   const root = env.KLIPP_ROOT || cwd;

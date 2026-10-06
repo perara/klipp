@@ -62,7 +62,7 @@ export const PAGE_TOOLS: McpTool[] = [
   {
     name: 'propose_ticket',
     description:
-      'Show the user the ticket you have written. It is checked first: if its type still needs something, the answer says what is missing, and nothing is shown. Otherwise the user decides whether to file it; the answer says whether it was filed, with its address, or what they said instead. The page and element details are added automatically.',
+      'Show the user the ticket you have written. It is checked first: if its type still needs something, the answer says what is missing, and nothing is shown. Otherwise the user decides whether to file it; the answer says whether it was filed, with its address, or opened on GitHub for them to submit, or what they said instead. The page and element details are added automatically.',
     inputSchema: TICKET_SCHEMA,
   },
 ];

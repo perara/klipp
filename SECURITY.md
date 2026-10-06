@@ -59,7 +59,9 @@ What it does to keep that safe:
 - **A click before anything is filed.** The card shows the whole ticket and the page details
   first. The server files only a ticket the agent proposed in that conversation, once, while it
   is waiting on the user. Tokens are scoped to their host: a github.com token goes only to
-  github.com, and nothing goes to a remote that isn't GitHub.
+  github.com, and nothing goes to a remote that isn't GitHub. With no token for github.com, the
+  server sends nothing to GitHub: it hands that same ticket back once, as a link to GitHub's
+  new-issue page, filled in, and the user submits it there, signed in as themselves.
 - **Bounded.** At most four agent runs at once (`chat.maxRuns`), 50 conversations, 1 MB request
   bodies, and every run stops when its page goes away or the dev server closes.
 - **No markup injection.** Agent output is rendered as DOM nodes, never through `innerHTML`, and

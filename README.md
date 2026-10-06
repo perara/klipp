@@ -94,7 +94,9 @@ export default defineConfig({
 Then:
 
 1. Have [Claude Code](https://code.claude.com) (`claude`) or [Codex](https://github.com/openai/codex) (`codex`) installed and logged in on the same machine.
-2. Log in to the GitHub CLI (`gh auth login`), or set `GITHUB_TOKEN`, so Klipp can file tickets.
+2. Log in to the GitHub CLI (`gh auth login`), or set `GITHUB_TOKEN`, so Klipp files tickets
+   itself. Without either, Klipp opens each ticket on GitHub in a new tab, filled in, for you to
+   submit.
 3. Run your dev server, open the app at `localhost`, and click the paperclip, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>.
 
 To let testers in from other devices, such as a phone on your network, set `chat.allowRemote`.
@@ -138,7 +140,11 @@ browser, so nobody has to ask "where?" or "which version?". The card shows all o
 anyone files. Change the labels with `chat.labels`.
 
 Klipp files on github.com, or on GitHub Enterprise when `gh` is logged in to that host
-(`gh auth login --hostname`). A token is only ever sent to the host it belongs to.
+(`gh auth login --hostname`). A token is only ever sent to the host it belongs to. With no token
+for github.com, the server sends nothing to GitHub: the tester's browser opens GitHub's new-issue
+page in a new tab, filled in with the ticket and its labels, and the tester submits it, signed in
+as themselves. A body too long for a link is cut short, with a note saying so. (GitHub keeps the
+labels only for people who may triage the repository.)
 
 ### Stable element IDs
 
@@ -207,7 +213,7 @@ entirely, register from a dynamic import behind `if (import.meta.env.DEV)`.
 - **No page text.** The agent sees structure and state, never the text on the page or form values. Console errors are sent by name and message; objects logged with them are named, not opened. Map features and 3D objects are described by their layer, geometry, type and name; their properties' values only when the app names them in `reveal`. Query values in addresses are blanked, except the ones you list in `keepQuery`.
 - **Read-only agents, kept to your repository.** Claude runs `--restricted` with only Read, Grep and Glob: no shell, no web, and `.env`, key and credential files are denied. Codex runs in a sandbox that reads only the repository and the system files programs need, and writes nothing; its commands get only a core environment. Neither loads your own settings or other MCP servers, and neither gets the dev server's environment beyond what it needs to start and log in.
 - **Your browser only.** The chat answers a browser on this machine at `localhost`, from the page itself. Other names, tunnels and proxies are turned away, even from loopback, so a site that rebinds its name to `127.0.0.1` gets nothing. With `chat.allowRemote`, other devices pair once with the code the dev server prints.
-- **Nothing filed without a click.** The card shows the whole ticket first, and the server files only the ticket the agent proposed, once.
+- **Nothing filed without a click.** The card shows the whole ticket first, and the server files only the ticket the agent proposed, once. Without a GitHub token it hands that ticket back once, as a filled-in GitHub link, for the tester to submit.
 - **Out of your page's way.** Klipp's key, pointer and focus events stop at its own root, so your page's handlers don't see them (only listeners on `window` or `document` in the capture phase, which see everything, still do).
 - **Strict-CSP friendly.** Klipp uses no `innerHTML`, no inline styles and no inline scripts.
 
@@ -222,8 +228,13 @@ app's `/@klipp/` to it:
 ```bash
 KLIPP=1 vite build   # the app, with Klipp's IDs and runtime
 KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_AGENT=claude \
-  KLIPP_GITHUB_TOKEN=github_pat_… npx klipp serve
+  KLIPP_REPO=https://github.com/owner/app npx klipp serve
 ```
+
+- **Tickets:** with no GitHub token, as in a container without `gh`, each ticket opens on GitHub
+  in the tester's browser, filled in, and they submit it there as themselves: no token to manage.
+  Set `KLIPP_GITHUB_TOKEN` to have the server file them instead. `KLIPP_REPO` names the
+  repository when the source has no git remote.
 
 - **Who:** the proxy names the signed-in user in a header it sets itself (and removes from what
   browsers send); `KLIPP_IDENTITY_HEADER` says which. Requests without it are refused.
@@ -240,8 +251,8 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
   AppArmor (Ubuntu 24.04 and later), a looser AppArmor profile too. Prefer Claude there.
 - **Running it:** `klipp serve` refuses to listen beyond localhost without
   `KLIPP_IDENTITY_HEADER`, answers `GET /healthz` for health checks, stops every run on
-  `SIGTERM`, and logs one JSON line per turn and per filed ticket: who, which agent, how long,
-  never what anyone typed. `klipp serve --help` lists its settings; `klipp/server` has the same
+  `SIGTERM`, and logs one JSON line per turn and per ticket (`filed`, or `prefilled` when it went
+  to the tester to submit): who, which agent, how long, never what anyone typed. `klipp serve --help` lists its settings; `klipp/server` has the same
   as `serve()` and `createKlippMiddleware()`.
 
 ## The AI box

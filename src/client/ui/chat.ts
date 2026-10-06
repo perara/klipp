@@ -108,6 +108,14 @@ export class TicketCard {
     this.status.replaceChildren('Filed: ', link);
   }
 
+  /** Opened on GitHub, filled in, for the user to submit: an https link, there if the tab isn't. */
+  submitOnGitHub(url: string) {
+    this.status.replaceChildren(
+      'GitHub opened in a new tab: submit the ticket there. ',
+      h('a', { href: url, target: '_blank', rel: 'noreferrer' }, 'Open it again'),
+    );
+  }
+
   failed(message: string) {
     this.status.textContent = `Couldn't file it: ${message}`;
   }

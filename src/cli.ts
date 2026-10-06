@@ -12,8 +12,9 @@ const USAGE = `Usage: klipp serve | klipp box
 klipp serve   Klipp's chat as its own HTTP server, for a shared environment behind a sign-in
               proxy. Settings: KLIPP_ROOT, KLIPP_PORT, KLIPP_HOST, KLIPP_REPO, KLIPP_AGENT,
               KLIPP_MODEL, KLIPP_IDENTITY_HEADER, KLIPP_ALLOW, KLIPP_MESSAGES_PER_HOUR,
-              KLIPP_MAX_RUNS, KLIPP_PASS_ENV, KLIPP_BOX_URL, KLIPP_BOX_TOKEN, and a GitHub token
-              (KLIPP_GITHUB_TOKEN).
+              KLIPP_MAX_RUNS, KLIPP_PASS_ENV, KLIPP_BOX_URL, KLIPP_BOX_TOKEN, and optionally a
+              GitHub token (KLIPP_GITHUB_TOKEN); without one, tickets open on GitHub, filled in,
+              for the tester to submit.
 klipp box     The AI box: Claude Code and Codex as a service, with an API for apps and a web page
               to sign the agents in, make tokens and watch runs. Settings: KLIPP_ROOT,
               KLIPP_BOX_HOST, KLIPP_BOX_PORT, KLIPP_BOX_DATA, KLIPP_BOX_TOKENS, KLIPP_MAX_RUNS,

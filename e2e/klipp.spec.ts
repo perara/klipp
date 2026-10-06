@@ -113,6 +113,25 @@ test('a bug becomes a ticket that is filed only when you say so, labelled as a b
   await expect(replies(page).last()).toHaveText('Filed! 📎');
 });
 
+test('without a GitHub token on the server, the ticket opens on GitHub to submit', async ({
+  page,
+  context,
+}) => {
+  const submit = 'https://github.com/example/app/issues/new?title=Count+does+nothing&labels=bug';
+  await page.route('**/@klipp/issue', (route) => route.fulfill({ json: { submit } }));
+  await context.route('https://github.com/**', (route) => route.fulfill({ body: 'GitHub' }));
+  await openChat(page);
+  await ask(page, 'please report this');
+  const card = chat(page).locator('.card');
+  const opened = context.waitForEvent('page');
+  await card.getByRole('button', { name: 'File ticket' }).click();
+  expect((await opened).url()).toBe(submit);
+  await expect(card.locator('.card-status')).toContainText(
+    'GitHub opened in a new tab: submit the ticket there.',
+  );
+  await expect(card.getByRole('link', { name: 'Open it again' })).toHaveAttribute('href', submit);
+});
+
 test('a build shows no paperclip when its chat server does not answer', async ({ page }, info) => {
   test.skip(info.project.name !== 'build', 'the dev server shows it at once');
   await page.route('**/@klipp/agents', (route) =>

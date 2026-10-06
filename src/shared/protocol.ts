@@ -140,4 +140,8 @@ export interface PairRequest {
   code: string;
 }
 
-export type IssueResponse = { url: string } | { error: string };
+/**
+ * The filed issue's address; or, when the server has no GitHub token, GitHub's new-issue page
+ * filled in with the ticket, for the user to submit there; or what went wrong.
+ */
+export type IssueResponse = { url: string } | { submit: string } | { error: string };

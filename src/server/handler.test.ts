@@ -13,16 +13,21 @@ const fakeAgent = [
 const filed: Array<IssueDraft & { labels: string[] }> = [];
 const servers: Array<{ server: Server; middleware: KlippMiddleware }> = [];
 
-async function serve(extra: Partial<KlippServerOptions> = {}) {
+/** A server whose filing is faked, unless `onGitHub`: then it files on GitHub as Klipp does. */
+async function serve(extra: Partial<KlippServerOptions> = {}, onGitHub = false) {
   const middleware = createKlippMiddleware({
     root: process.cwd(),
     manifest: () => Promise.resolve({ version: 1, entries: {} }),
     commands: { claude: fakeAgent, codex: ['no-such-codex-binary'] },
     labels: { bug: ['defect'] },
-    fileIssue: (draft, labels) => {
-      filed.push({ ...draft, labels });
-      return Promise.resolve('https://github.com/acme/app/issues/1');
-    },
+    ...(onGitHub
+      ? {}
+      : {
+          fileIssue: (draft: IssueDraft, labels: string[]) => {
+            filed.push({ ...draft, labels });
+            return Promise.resolve('https://github.com/acme/app/issues/1');
+          },
+        }),
     ...extra,
   });
   const server = createServer((req, res) =>
@@ -114,11 +119,13 @@ async function chat(
       events.push(event);
       if (event.type === 'conversation') conversation = event.id;
       if (event.type === 'client_tool' && answer) {
-        await post('/@klipp/tool-result', {
-          conversation,
-          id: event.call.id,
-          content: await answer(event, conversation),
-        });
+        const content = await answer(event, conversation);
+        await post(
+          '/@klipp/tool-result',
+          { conversation, id: event.call.id, content },
+          headers,
+          at,
+        );
       }
     }
   }
@@ -205,6 +212,42 @@ describe('createKlippMiddleware', () => {
     expect(filed[0]!.body).toMatch(/### Steps to reproduce\n\n1\. Open the page/);
     expect(filed[0]!.body.endsWith('\n\n| Klipp | page |')).toBe(true);
     expect(text).toBe('Filed! 📎');
+  });
+
+  it('without a GitHub token, hands the ticket back once as a filled-in new-issue link', async () => {
+    const logged: unknown[] = [];
+    const { base: tokenless } = await serve(
+      { repo: 'https://github.com/acme/app', env: {}, log: (entry) => logged.push(entry) },
+      true,
+    );
+    const answers: unknown[] = [];
+    const path = process.env.PATH;
+    process.env.PATH = '/klipp-test-has-no-gh'; // no GitHub CLI login either, as in a container
+    try {
+      await chat(
+        { agent: 'claude', text: 'report it', page },
+        async (event, conversation) => {
+          const request = { conversation, proposal: event.call.id, footer: '| Klipp | page |' };
+          const first = await post('/@klipp/issue', request, headers, tokenless);
+          const again = await post('/@klipp/issue', request, headers, tokenless);
+          answers.push(await first.json(), again.status);
+          return 'Not filed yet';
+        },
+        tokenless,
+      );
+    } finally {
+      process.env.PATH = path;
+    }
+    expect(answers[1]).toBe(404);
+    const link = new URL((answers[0] as { submit: string }).submit);
+    expect(`${link.origin}${link.pathname}`).toBe('https://github.com/acme/app/issues/new');
+    expect(link.searchParams.get('title')).toBe('Count does nothing');
+    expect(link.searchParams.get('labels')).toBe('defect');
+    expect(link.searchParams.get('body')).toMatch(
+      /^\*\*Bug\*\* · severity: major[^]*\| Klipp \| page \|$/,
+    );
+    expect(logged).toContainEqual({ event: 'prefilled', user: undefined });
+    expect(JSON.stringify(logged)).not.toContain('Count does nothing');
   });
 
   it('files nothing the agent did not propose, or once the turn is over', async () => {
