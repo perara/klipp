@@ -74,7 +74,7 @@ when the project allows it, so allow it for your project's own dependencies firs
 
 ```bash
 npm config set allow-remote root --location=project
-npm install -D https://github.com/perara/klipp/releases/download/v0.8.0/klipp-0.8.0.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.8.1/klipp-0.8.1.tgz
 ```
 
 The first line writes `allow-remote=root` to the project's `.npmrc`; commit it with the lockfile,

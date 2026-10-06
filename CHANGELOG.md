@@ -7,6 +7,8 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-06
+
 ### Changed
 
 - A ticket is never lost for want of a GitHub token. With no token for a github.com repository
@@ -231,7 +233,8 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/perara/klipp/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/perara/klipp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/perara/klipp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/perara/klipp/compare/v0.6.0...v0.6.1
