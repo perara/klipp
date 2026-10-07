@@ -3,7 +3,13 @@ import { connect, createServer as createHttp2Server } from 'node:http2';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ChatEvent, ChatRequest, IssueDraft, PageContext } from '../shared/protocol.js';
+import type {
+  ChatEvent,
+  ChatRequest,
+  IssueDraft,
+  PageContext,
+  ClientToolResult,
+} from '../shared/protocol.js';
 import { createKlippMiddleware, type KlippMiddleware, type KlippServerOptions } from './handler.js';
 
 const fakeAgent = [
@@ -100,7 +106,13 @@ type ToolEvent = ChatEvent & { type: 'client_tool' };
 /** Reads the chat's event stream, answering page-tool calls with `answer`. */
 async function chat(
   request: ChatRequest,
-  answer?: (event: ToolEvent, conversation: string) => Promise<string> | string,
+  answer?: (
+    event: ToolEvent,
+    conversation: string,
+  ) =>
+    | Promise<string | Pick<ClientToolResult, 'content' | 'image' | 'isError'>>
+    | string
+    | Pick<ClientToolResult, 'content' | 'image' | 'isError'>,
   at = base,
 ) {
   const response = await post('/@klipp/chat', request, headers, at);
@@ -122,7 +134,11 @@ async function chat(
         const content = await answer(event, conversation);
         await post(
           '/@klipp/tool-result',
-          { conversation, id: event.call.id, content },
+          {
+            conversation,
+            id: event.call.id,
+            ...(typeof content === 'string' ? { content } : content),
+          },
           headers,
           at,
         );
@@ -430,5 +446,138 @@ describe('createKlippMiddleware', () => {
     expect((await fetch(`${base}/index.html`)).status).toBe(404);
     expect((await post('/@klipp/other', {})).status).toBe(404);
     expect((await post('/@klipp/pair', { code: 'x' })).status).toBe(404);
+  });
+});
+
+it('serve/plugin filing uses a local token, then the box login, then the prefilled fallback', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { startBox } = await import('../box/server.js');
+  const { vi } = await import('vitest');
+  const data = mkdtempSync(join(tmpdir(), 'klipp-precedence-'));
+  for (const dir of ['claude', 'github']) mkdirSync(join(data, dir));
+  writeFileSync(join(data, 'claude', 'fake-signed-in'), '');
+  writeFileSync(join(data, 'github', 'fake-login'), 'gho_fake_secret');
+  const remote = vi.fn<typeof fetch>(() =>
+    Promise.resolve(Response.json({ html_url: 'https://github.com/acme/app/issues/box' })),
+  );
+  const box = await startBox({
+    root: process.cwd(),
+    data,
+    port: 0,
+    tokens: 'app=precedence-token-012345',
+    commands: { claude: fakeAgent },
+    githubCommand: [
+      process.execPath,
+      fileURLToPath(new URL('../../test/fake-gh.mjs', import.meta.url)),
+    ],
+    githubFetch: remote,
+    audit: () => undefined,
+  });
+  const realFetch = fetch;
+  const local = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+    if (
+      (url instanceof Request ? url.url : url.toString()) ===
+      'https://api.github.com/repos/acme/app/issues'
+    ) {
+      expect(options?.headers).toMatchObject({ Authorization: 'Bearer local-token' });
+      return Response.json({ html_url: 'https://github.com/acme/app/issues/local' });
+    }
+    return realFetch(url, options);
+  });
+  try {
+    for (const [env, expected] of [
+      [{ KLIPP_GITHUB_TOKEN: 'local-token' }, 'local'],
+      [{}, 'box'],
+      [{}, 'prefilled'],
+    ] as const) {
+      if (expected === 'prefilled')
+        await realFetch(`${box.url}/ui/api/agents/github/logout`, {
+          method: 'POST',
+          headers: { 'X-Klipp': '1', Origin: box.url },
+        });
+      const at = (
+        await serve(
+          {
+            repo: 'https://github.com/acme/app',
+            box: { url: box.url, token: 'precedence-token-012345' },
+            env,
+          },
+          true,
+        )
+      ).base;
+      await chat(
+        { agent: 'claude', text: 'report it', page },
+        async (event, conversation) => {
+          const request = { conversation, proposal: event.call.id, footer: '', title: 'forged' };
+          const response = await post('/@klipp/issue', request, headers, at);
+          expect(response.status).toBe(200);
+          const result = (await response.json()) as { url?: string; submit?: string };
+          if (expected === 'prefilled') expect(result.submit).toContain('/issues/new?');
+          else expect(result.url).toBe(`https://github.com/acme/app/issues/${expected}`);
+          expect((await post('/@klipp/issue', request, headers, at)).status).toBe(404);
+          return 'Filed';
+        },
+        at,
+      );
+    }
+    expect(remote).toHaveBeenCalledTimes(1);
+  } finally {
+    local.mockRestore();
+    await box.close();
+  }
+});
+
+it('accepts only approved screenshot tool results and binds attachments to their conversation', async () => {
+  const image = { mimeType: 'image/jpeg' as const, data: '/9j/2Q==', width: 1, height: 1 };
+  let imageId = '';
+  const first = await chat(
+    { agent: 'claude', text: 'screenshot', page },
+    async (event, conversation) => {
+      expect(event.call.name).toBe('take_screenshot');
+      imageId = event.call.id;
+      const invalid = await post('/@klipp/tool-result', {
+        conversation,
+        id: imageId,
+        content: 'approved',
+        image: { ...image, width: 1601 },
+      });
+      expect(invalid.status).toBe(400);
+      return { content: 'Approved.', image };
+    },
+  );
+  expect(first.text).toContain('Image received: image/jpeg');
+  await chat(
+    { agent: 'claude', conversation: first.conversation, text: 'report', page },
+    async (event, conversation) => {
+      const request = {
+        conversation,
+        proposal: event.call.id,
+        footer: '',
+        attachments: ['unapproved'],
+      };
+      expect((await post('/@klipp/issue', request)).status).toBe(400);
+      expect((await post('/@klipp/issue', { ...request, attachments: [imageId] })).status).toBe(
+        200,
+      );
+      expect((await post('/@klipp/issue', { ...request, attachments: [imageId] })).status).toBe(
+        404,
+      );
+      return 'Filed';
+    },
+  );
+  await chat({ agent: 'claude', text: 'report', page }, async (event, conversation) => {
+    expect(
+      (
+        await post('/@klipp/issue', {
+          conversation,
+          proposal: event.call.id,
+          footer: '',
+          attachments: [imageId],
+        })
+      ).status,
+    ).toBe(400);
+    return 'Not filed';
   });
 });

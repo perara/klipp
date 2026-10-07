@@ -29,6 +29,17 @@ const box = await startBox({
       }
     : {}),
   commands: { claude: fake, codex: fake },
+  githubCommand: [process.execPath, fileURLToPath(new URL('./fake-gh.mjs', import.meta.url))],
+  githubFetch: async (_url, options) => {
+    const body = JSON.parse(options?.body ?? '{}');
+    return Response.json(
+      body.content
+        ? { commit: { sha: 'abcdef' } }
+        : body.title
+          ? { html_url: 'https://github.com/example/app/issues/42' }
+          : { object: { sha: 'abcdef' } },
+    );
+  },
 });
 // Playwright stops the box with SIGTERM (see playwright.config.ts): the data folder goes first,
 // then any sign-in the tests left running is stopped.

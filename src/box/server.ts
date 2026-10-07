@@ -46,6 +46,10 @@ export interface BoxOptions {
   maxRuns?: number | undefined;
   /** The model when a run names none. */
   model?: string | undefined;
+  /** Replace GitHub's command and leading arguments in tests. */
+  githubCommand?: string[] | undefined;
+  /** Replaces GitHub HTTP requests in tests. */
+  githubFetch?: typeof fetch | undefined;
   /** Replace an agent's command and leading arguments, as the tests do. */
   commands?: Partial<Record<AgentId, string[]>> | undefined;
   /** How often an idle stream gets an empty line. Default: 15 s. */
@@ -72,7 +76,8 @@ export interface BoxAudit {
     | 'agent.login.cancel'
     | 'agent.logout'
     | 'token.create'
-    | 'token.revoke';
+    | 'token.revoke'
+    | 'issue.filed';
   target: string;
 }
 
@@ -99,7 +104,15 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     CLAUDE_CONFIG_DIR: join(options.data, 'claude'),
     CODEX_HOME: join(options.data, 'codex'),
   };
-  const env: NodeJS.ProcessEnv = { ...process.env, ...config };
+  const githubHome = join(options.data, 'github-home');
+  const githubConfig = join(options.data, 'github');
+  for (const dir of [githubHome, githubConfig]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...config,
+    GH_CONFIG_DIR: githubConfig,
+    KLIPP_GITHUB_HOME: githubHome,
+  };
   for (const key of BILLED) delete env[key];
   for (const dir of Object.values(config)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const bridge = new McpBridge(options.version);
@@ -110,7 +123,11 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     commands: options.commands,
     loginHint: ' Open Smia to sign in again.',
   });
-  const logins = new Logins({ commandOf: (agent) => commandOf(options.commands, agent), env });
+  const logins = new Logins({
+    commandOf: (agent) => commandOf(options.commands, agent),
+    env,
+    githubCommand: options.githubCommand,
+  });
   const problem = async (agent: AgentId) =>
     (await runner.problem(agent)) ??
     ((await logins.signedIn(agent))
@@ -119,7 +136,15 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
   const assets = options.assets ?? fileURLToPath(new URL('../', import.meta.url));
   const tokens = new Tokens(options.data, options.tokens);
   const log = new RunLog(options.data);
+  const audit =
+    options.audit ??
+    ((entry: BoxAudit) =>
+      console.log(JSON.stringify({ time: new Date().toISOString(), ...entry })));
   const v1 = createV1({
+    logins,
+    data: options.data,
+    githubFetch: options.githubFetch,
+    audit,
     runner,
     problem,
     tokens,
@@ -132,9 +157,7 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
   });
   const ui = createUiApi({
     identity,
-    audit:
-      options.audit ??
-      ((entry) => console.log(JSON.stringify({ time: new Date().toISOString(), ...entry }))),
+    audit,
     runner,
     logins,
     tokens,

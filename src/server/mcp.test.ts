@@ -141,3 +141,27 @@ describe('McpBridge', () => {
     bridge.unregister('c3');
   });
 });
+
+it('delivers an approved raster image as MCP image content', async () => {
+  bridge.register(
+    'image',
+    () =>
+      Promise.resolve({
+        text: 'Approved.',
+        image: { mimeType: 'image/jpeg', data: '/9j/2Q==', width: 1, height: 1 },
+      }),
+    ECHO,
+  );
+  const response = await post(
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo' } },
+    'image',
+  );
+  expect(await response.json()).toMatchObject({
+    result: {
+      content: [
+        { type: 'text', text: 'Approved.' },
+        { type: 'image', mimeType: 'image/jpeg', data: '/9j/2Q==' },
+      ],
+    },
+  });
+});

@@ -3,7 +3,7 @@ import { createServer as createHttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createServer } from 'vite';
+import { createServer, resolveConfig } from 'vite';
 import { describe, expect, it } from 'vitest';
 import klipp from './index.js';
 
@@ -37,4 +37,31 @@ describe('chat.box', () => {
       else process.env.KLIPP_BOX_TOKEN = before;
     }
   });
+});
+
+it.each([
+  ['serve', true],
+  ['build', false],
+] as const)('defines a typed boolean flag for %s', async (command, active) => {
+  const before = process.env.KLIPP;
+  const vitest = process.env.VITEST;
+  delete process.env.KLIPP;
+  delete process.env.VITEST;
+  try {
+    const config = await resolveConfig({ configFile: false, plugins: [klipp()] }, command);
+    expect(config.define?.['import.meta.env.KLIPP']).toBe(JSON.stringify(active));
+    process.env.KLIPP = '1';
+    const build = await resolveConfig({ configFile: false, plugins: [klipp()] }, 'build');
+    expect(build.define?.['import.meta.env.KLIPP']).toBe('true');
+    const disabled = await resolveConfig(
+      { configFile: false, plugins: [klipp({ enabled: false })] },
+      command,
+    );
+    expect(disabled.define?.['import.meta.env.KLIPP']).toBe('false');
+  } finally {
+    if (before === undefined) delete process.env.KLIPP;
+    else process.env.KLIPP = before;
+    if (vitest === undefined) delete process.env.VITEST;
+    else process.env.VITEST = vitest;
+  }
 });

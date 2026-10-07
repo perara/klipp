@@ -1,3 +1,4 @@
+import type { Screenshot } from '../shared/screenshot.js';
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -9,6 +10,7 @@ export interface McpTool {
 }
 
 export interface McpResult {
+  image?: Screenshot;
   text: string;
   isError?: boolean;
 }
@@ -157,7 +159,12 @@ export class McpBridge {
         try {
           const result = await registration.handler(name, args);
           return ok({
-            content: [{ type: 'text', text: result.text }],
+            content: [
+              { type: 'text', text: result.text },
+              ...(result.image
+                ? [{ type: 'image', data: result.image.data, mimeType: result.image.mimeType }]
+                : []),
+            ],
             isError: result.isError ?? false,
           });
         } catch (error) {

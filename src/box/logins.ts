@@ -3,8 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { AGENTS, childEnv } from '../server/agents.js';
 import type { AgentId } from '../shared/protocol.js';
 
+export type LoginId = AgentId | 'github';
+
+export const LOGIN_LABELS = { claude: 'Claude', codex: 'Codex', github: 'GitHub' };
+
 export interface AgentStatus {
-  id: AgentId;
+  id: LoginId;
   label: string;
   version?: string;
   signedIn: boolean;
@@ -25,7 +29,21 @@ const COMMANDS = {
     status: ['auth', 'status'],
   },
   codex: { login: ['login', '--device-auth'], logout: ['logout'], status: ['login', 'status'] },
-} satisfies Record<AgentId, Record<'login' | 'logout' | 'status', string[]>>;
+  github: {
+    login: [
+      'auth',
+      'login',
+      '--hostname',
+      'github.com',
+      '--git-protocol',
+      'https',
+      '--web',
+      '--insecure-storage',
+    ],
+    logout: ['auth', 'logout', '--hostname', 'github.com'],
+    status: ['auth', 'status', '--hostname', 'github.com'],
+  },
+} satisfies Record<LoginId, Record<'login' | 'logout' | 'status', string[]>>;
 
 // eslint-disable-next-line no-control-regex -- terminal colour codes in the CLIs' output
 const ANSI = /\u001b\[[0-9;]*m/g;
@@ -58,7 +76,7 @@ export class Login {
   private output = '';
 
   constructor(
-    readonly agent: AgentId,
+    readonly agent: LoginId,
     private readonly child: ChildProcess,
     timeoutMs: number,
     onEnd: () => void,
@@ -82,7 +100,10 @@ export class Login {
             ? { state: 'done' }
             : {
                 state: 'failed',
-                message: lastLine(tail) ?? `The sign-in stopped (exit ${String(code)}).`,
+                message:
+                  this.agent === 'github'
+                    ? 'GitHub sign-in failed. Try again.'
+                    : (lastLine(tail) ?? `The sign-in stopped (exit ${String(code)}).`),
               },
         );
       }
@@ -122,6 +143,7 @@ export class Login {
   private parse() {
     if (this.state.state !== 'starting' && this.state.state !== 'waiting') return;
     const url = URL_PATTERN.exec(this.output)?.[0];
+    if (this.agent === 'github' && url !== 'https://github.com/login/device') return;
     const claude = this.agent === 'claude';
     const code = claude ? undefined : DEVICE_CODE.exec(this.output)?.[0];
     // Each link is useful only with what follows it: Codex's code, Claude's prompt for the
@@ -152,6 +174,7 @@ export class Login {
 
 export interface LoginsOptions {
   commandOf(agent: AgentId): string[];
+  githubCommand?: string[] | undefined;
   /** Holds CLAUDE_CONFIG_DIR and CODEX_HOME: where the box keeps the logins. */
   env: NodeJS.ProcessEnv;
   /** Default: 15 minutes. */
@@ -160,36 +183,37 @@ export interface LoginsOptions {
 
 /** Signing the agents in and out with their own CLIs, and asking them how they are. */
 export class Logins {
-  private readonly running = new Map<AgentId, Login>();
+  private readonly running = new Map<LoginId, Login>();
   private readonly all = new Map<string, Login>();
-  private readonly status = new Map<AgentId, { at: number; value: Promise<boolean> }>();
+  private readonly status = new Map<LoginId, { at: number; value: Promise<boolean> }>();
 
   constructor(private readonly options: LoginsOptions) {}
 
-  signedIn(agent: AgentId): Promise<boolean> {
+  signedIn(agent: LoginId): Promise<boolean> {
     const cached = this.status.get(agent);
     if (cached && Date.now() - cached.at < 10_000) return cached.value;
     const value = this.exec(agent, COMMANDS[agent].status).then(
-      (r) => r.code === 0 && !byApiKey(agent, r),
+      (r) => r.code === 0 && (agent === 'github' || !byApiKey(agent, r)),
     );
     this.status.set(agent, { at: Date.now(), value });
     return value;
   }
 
-  async version(agent: AgentId): Promise<string | undefined> {
+  async version(agent: LoginId): Promise<string | undefined> {
     const result = await this.exec(agent, ['--version']);
     return result.code === 0 ? result.stdout.trim().split('\n')[0] : undefined;
   }
 
   /** Starts the CLI's own sign-in, or joins the one already under way. */
-  start(agent: AgentId): Login {
+  start(agent: LoginId): Login {
     const running = this.running.get(agent);
     if (running?.state.state === 'starting' || running?.state.state === 'waiting') return running;
-    const [binary, ...lead] = this.options.commandOf(agent);
+    const [binary, ...lead] = this.commandOf(agent);
     const child = spawn(binary!, [...lead, ...COMMANDS[agent].login], {
-      env: childEnv(AGENTS[agent], this.options.env),
+      env: this.envOf(agent),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    if (agent === 'github') child.stdin.end('\n');
     const login = new Login(agent, child, this.options.timeoutMs ?? 15 * 60_000, () => {
       // An ended sign-in's child may exit after the next one has started.
       if (this.running.get(agent) === login) this.running.delete(agent);
@@ -204,8 +228,10 @@ export class Logins {
     return this.all.get(id);
   }
 
-  async logout(agent: AgentId): Promise<void> {
-    await this.exec(agent, COMMANDS[agent].logout);
+  async logout(agent: LoginId): Promise<void> {
+    this.running.get(agent)?.cancel();
+    const result = await this.exec(agent, COMMANDS[agent].logout);
+    if (result.code !== 0) throw new Error('Sign-out failed. Try again.');
     this.status.delete(agent);
   }
 
@@ -213,16 +239,50 @@ export class Logins {
     for (const login of this.running.values()) login.cancel();
   }
 
+  /** Only the box uses this token, never the owner page or an agent. */
+  async githubToken(): Promise<string | undefined> {
+    const result = await this.exec('github', ['auth', 'token', '--hostname', 'github.com']);
+    return result.code === 0 ? result.stdout.trim() || undefined : undefined;
+  }
+
+  private commandOf(agent: LoginId): string[] {
+    return agent === 'github'
+      ? (this.options.githubCommand ?? ['gh'])
+      : this.options.commandOf(agent);
+  }
+
+  private envOf(agent: LoginId): NodeJS.ProcessEnv {
+    if (agent !== 'github') return childEnv(AGENTS[agent], this.options.env);
+    const env: NodeJS.ProcessEnv = {
+      GH_BROWSER: 'true',
+      GH_PROMPT_DISABLED: '1',
+      GH_CONFIG_DIR: this.options.env.GH_CONFIG_DIR,
+      HOME: this.options.env.KLIPP_GITHUB_HOME,
+    };
+    for (const key of [
+      'PATH',
+      'LANG',
+      'LC_ALL',
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
+      'NO_PROXY',
+      'SSL_CERT_FILE',
+    ]) {
+      if (this.options.env[key]) env[key] = this.options.env[key];
+    }
+    return env;
+  }
+
   private exec(
-    agent: AgentId,
+    agent: LoginId,
     args: string[],
   ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-    const [binary, ...lead] = this.options.commandOf(agent);
+    const [binary, ...lead] = this.commandOf(agent);
     return new Promise((done) => {
       let stdout = '';
       let stderr = '';
       const child = spawn(binary!, [...lead, ...args], {
-        env: childEnv(AGENTS[agent], this.options.env),
+        env: this.envOf(agent),
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 30_000,
       });

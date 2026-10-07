@@ -136,7 +136,8 @@ async function callTool(name, input) {
     method: 'tools/call',
     params: { name, arguments: input },
   });
-  return answer.result.content[0].text;
+  const image = answer.result.content.find((block) => block.type === 'image');
+  return answer.result.content[0].text + (image ? ` Image received: ${image.mimeType}.` : '');
 }
 
 let said = 0;
@@ -195,6 +196,14 @@ if (q.includes('what did i say')) {
   say(`You said: ${existsSync(memory) ? readFileSync(memory, 'utf8') : 'nothing yet'}`);
 } else if (q.includes('who are you')) {
   say(codex ? 'I am Codex, in a paperclip.' : 'I am Claude, in a paperclip.');
+} else if (q.includes('screenshot')) {
+  const requested = /screenshot id (\S+)/.exec(question)?.[1];
+  const region = q.includes('region') ? { x: 0, y: 0, width: 120, height: 120 } : undefined;
+  const result = await callTool('take_screenshot', {
+    ...(requested ? { id: requested } : {}),
+    ...(region ? { region } : {}),
+  });
+  say(result);
 } else if (q.includes('report')) {
   const result = await callTool('propose_ticket', {
     type: 'bug',

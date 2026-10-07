@@ -1,5 +1,7 @@
 import type { AgentId, AgentInfo } from '../../shared/protocol.js';
 import { ticketText, TYPE_NAMES, type Ticket } from '../../shared/ticket.js';
+import type { Capture } from '../screenshot.js';
+import { ScreenshotCard } from './screenshot.js';
 import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 
@@ -265,6 +267,12 @@ export class ChatView {
   ticket(ticket: Ticket, footer: string): TicketCard {
     // Built before it is added, so the whole card scrolls into view.
     const card = new TicketCard(h('div', { class: 'msg klipp card' }), ticket, footer);
+    this.add(card.element);
+    return card;
+  }
+
+  screenshot(capture: Capture): ScreenshotCard {
+    const card = new ScreenshotCard(capture);
     this.add(card.element);
     return card;
   }

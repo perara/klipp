@@ -11,9 +11,10 @@ import type {
   PairRequest,
   ToolResultRequest,
 } from '../shared/protocol.js';
+import { isScreenshot, type Screenshot } from '../shared/screenshot.js';
 import { DEFAULT_LABELS, ticketBody, type TicketType } from '../shared/ticket.js';
 import { AGENTS } from './agents.js';
-import { boxRunner, type BoxConnection } from './box-client.js';
+import { boxFileIssue, boxRunner, type BoxConnection } from './box-client.js';
 import { answerTool, Conversations, runTurn } from './conversation.js';
 import { fileGitHubIssue, githubToken, newIssueLink } from './github.js';
 import { fromKlipp, isLocal, Pairing } from './guard.js';
@@ -141,13 +142,30 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   async function fileIssue(
     draft: IssueDraft,
     labels: string[],
+    id: string,
+    attachments: Screenshot[],
   ): Promise<Exclude<IssueResponse, { error: string }>> {
     if (options.fileIssue) return { url: await options.fileIssue(draft, labels) };
     if (!options.repo) throw new Error('No GitHub repository is known for this app.');
-    const token = githubToken(options.repo, options.env ?? process.env);
+    const token = githubToken(
+      options.repo,
+      options.env ?? process.env,
+      options.box && new URL(options.repo).host === 'github.com' ? () => undefined : undefined,
+    );
+    if (!token && options.box && new URL(options.repo).host === 'github.com') {
+      const url = await boxFileIssue(options.box, {
+        id,
+        repo: options.repo,
+        title: draft.title,
+        body: draft.body,
+        labels,
+        attachments,
+      });
+      if (url) return { url };
+    }
     // No token for github.com: the user submits it there, signed in as themselves.
     if (!token) return { submit: newIssueLink(options.repo, draft, labels) };
-    return { url: await fileGitHubIssue(options.repo, draft, token, labels) };
+    return { url: await fileGitHubIssue(options.repo, draft, token, labels, attachments) };
   }
   const labelsFor = (type: TicketType): string[] => options.labels?.[type] ?? DEFAULT_LABELS[type];
 
@@ -221,12 +239,15 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
   async function toolResult(req: IncomingMessage, res: ServerResponse) {
     const result = (await readJson(req)) as Partial<ToolResultRequest>;
     const conversation = conversations.find(String(result.conversation), userOf(req));
+    if (result.image !== undefined && (!isScreenshot(result.image) || result.isError))
+      return json(res, 400, { error: 'Invalid screenshot.' });
     const delivered =
       conversation !== undefined &&
       typeof result.content === 'string' &&
       answerTool(conversation, {
         id: String(result.id),
         content: result.content,
+        ...(result.image ? { image: result.image } : {}),
         ...(result.isError === true ? { isError: true } : {}),
       });
     json(res, delivered ? 200 : 404, { delivered });
@@ -250,13 +271,23 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     if (typeof request.footer !== 'string' || request.footer.length > MAX_FOOTER) {
       return json(res, 400, { error: 'The page details are missing or too long.' });
     }
+    const ids = request.attachments ?? [];
+    if (
+      !Array.isArray(ids) ||
+      ids.some((id) => typeof id !== 'string' || !conversation.screenshots.has(id)) ||
+      new Set(ids).size !== ids.length
+    )
+      return json(res, 400, {
+        error: 'Only screenshots already approved in this conversation can be attached.',
+      });
+    const attachments = ids.map((id) => conversation.screenshots.get(id)!);
     conversation.proposals.delete(proposal);
     try {
       // Who reported it comes from the proxy, never from the page.
       const reporter = user ? `\n\nReported by ${user.replace(/[\\`*_[\]()<>#|]/g, '\\$&')}.` : '';
       const body = `${ticketBody(ticket)}\n\n${request.footer}${reporter}`;
       const draft = { title: ticket.title, body, type: ticket.type };
-      const filed = await fileIssue(draft, labelsFor(ticket.type));
+      const filed = await fileIssue(draft, labelsFor(ticket.type), proposal, attachments);
       // The link carries the ticket's text, so it stays out of the log.
       log('url' in filed ? { event: 'filed', user, url: filed.url } : { event: 'prefilled', user });
       json(res, 200, filed satisfies IssueResponse);

@@ -20,7 +20,7 @@ export async function agentsView(): Promise<View> {
       'div',
       { class: 'section-heading' },
       h('h2', {}, 'Agents'),
-      h('p', { class: 'muted' }, 'Your subscriptions. Ready for the next idea.'),
+      h('p', { class: 'muted' }, 'Your subscriptions and GitHub. Ready for the next idea.'),
     ),
     cards,
   );
@@ -70,7 +70,9 @@ export async function agentsView(): Promise<View> {
         { class: 'agent-description muted' },
         agent.id === 'claude'
           ? 'Thoughtful answers, powered by Claude Code.'
-          : 'Repository insight, powered by Codex.',
+          : agent.id === 'codex'
+            ? 'Repository insight, powered by Codex.'
+            : 'File tickets here, with approved screenshots.',
       ),
       h('p', { class: 'agent-version muted' }, agent.version ?? 'Not installed'),
       agent.problem
@@ -80,7 +82,9 @@ export async function agentsView(): Promise<View> {
             { class: 'muted' },
             agent.signedIn
               ? 'Ready to work in the repository.'
-              : 'Sign in with your subscription to get started.',
+              : agent.id === 'github'
+                ? 'Sign in once to file tickets from your apps.'
+                : 'Sign in with your subscription to get started.',
           ),
       h(
         'div',

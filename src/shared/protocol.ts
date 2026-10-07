@@ -1,3 +1,4 @@
+import type { Screenshot } from './screenshot.js';
 import type { TicketType } from './ticket.js';
 
 /** The coding agents Klipp can run in the background, with your own login. */
@@ -79,7 +80,12 @@ export interface PageContext {
 }
 
 /** Tools the agent calls that need the page or the user; the browser answers them. */
-export const CLIENT_TOOLS = ['point_at_element', 'inspect_element', 'propose_ticket'] as const;
+export const CLIENT_TOOLS = [
+  'point_at_element',
+  'inspect_element',
+  'take_screenshot',
+  'propose_ticket',
+] as const;
 export type ClientToolName = (typeof CLIENT_TOOLS)[number];
 
 export interface ClientToolCall {
@@ -89,6 +95,8 @@ export interface ClientToolCall {
 }
 
 export interface ClientToolResult {
+  /** Only after explicit approval in the chat. */
+  image?: Screenshot;
   id: string;
   content: string;
   isError?: boolean;
@@ -133,6 +141,8 @@ export interface IssueRequest {
   /** The id of the propose_ticket call that is waiting on the user. */
   proposal: string;
   footer: string;
+  /** IDs of previously approved screenshots, never image bytes from the filing request. */
+  attachments?: string[];
 }
 
 /** Pairs another device when `allowRemote` is on, with the code the dev server printed. */

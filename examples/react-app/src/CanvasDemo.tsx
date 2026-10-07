@@ -94,6 +94,7 @@ function IncidentMap() {
     });
     window.exampleMap = map;
     // What Klipp needs to tell the map's features apart. `kind` is safe to show; names aren't.
+    if (!import.meta.env.KLIPP) return;
     const unregister = registerCanvas(
       map.getCanvas(),
       maplibreTargets(map, { layers: ['search-areas', 'posts'], reveal: ['kind'] }),
@@ -110,7 +111,10 @@ function IncidentMap() {
 function KlippTargets() {
   const { gl, scene, camera, raycaster } = useThree();
   useEffect(
-    () => registerCanvas(gl.domElement, threeTargets({ scene, camera, raycaster })),
+    () =>
+      import.meta.env.KLIPP
+        ? registerCanvas(gl.domElement, threeTargets({ scene, camera, raycaster }))
+        : undefined,
     [gl, scene, camera, raycaster],
   );
   return null;

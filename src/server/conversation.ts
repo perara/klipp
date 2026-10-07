@@ -1,3 +1,5 @@
+import type { Screenshot } from '../shared/screenshot.js';
+import { MAX_SCREENSHOTS } from '../shared/screenshot.js';
 import { randomUUID } from 'node:crypto';
 import type {
   AgentId,
@@ -27,6 +29,7 @@ export interface Conversation {
   pending: Map<string, (result: ClientToolResult) => void>;
   /** Tickets shown to the user and waiting on their decision, by tool-call id. */
   proposals: Map<string, Ticket>;
+  screenshots: Map<string, Screenshot>;
   touched: number;
 }
 
@@ -54,6 +57,7 @@ export class Conversations {
       busy: false,
       pending: new Map(),
       proposals: new Map(),
+      screenshots: new Map(),
       touched: now,
     };
     this.all.set(created.id, created);
@@ -113,7 +117,16 @@ function askBrowser(
   return new Promise<McpResult>((resolve) => {
     conversation.pending.set(id, (result) => {
       conversation.proposals.delete(id);
-      resolve({ text: result.content, isError: result.isError ?? false });
+      if (name === 'take_screenshot' && result.image && !result.isError) {
+        if (conversation.screenshots.size >= MAX_SCREENSHOTS)
+          conversation.screenshots.delete(conversation.screenshots.keys().next().value!);
+        conversation.screenshots.set(id, result.image);
+      }
+      resolve({
+        text: result.content,
+        isError: result.isError ?? false,
+        ...(name === 'take_screenshot' && result.image ? { image: result.image } : {}),
+      });
     });
     deps.emit({ type: 'client_tool', call: { id, name: name as ClientToolName, input } });
   });
