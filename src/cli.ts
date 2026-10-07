@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // `klipp serve`: Klipp's chat as its own server, for a shared environment behind a sign-in
-// proxy. `klipp box`: the AI box, the agents as a service. Settings come from the environment;
+// proxy. `klipp box`: Smia, the agents as a service. Settings come from the environment;
 // see src/server/env.ts, src/box/env.ts or the README.
 import { boxOptionsFromEnv } from './box/env.js';
 import { startBox } from './box/server.js';
 import { optionsFromEnv } from './server/env.js';
 import { serve } from './server/serve.js';
 
-const USAGE = `Usage: klipp serve | klipp box
+const USAGE = `Usage: klipp serve | klipp box | klipp smia
 
 klipp serve   Klipp's chat as its own HTTP server, for a shared environment behind a sign-in
               proxy. Settings: KLIPP_ROOT, KLIPP_PORT, KLIPP_HOST, KLIPP_REPO, KLIPP_AGENT,
@@ -15,10 +15,13 @@ klipp serve   Klipp's chat as its own HTTP server, for a shared environment behi
               KLIPP_MAX_RUNS, KLIPP_PASS_ENV, KLIPP_BOX_URL, KLIPP_BOX_TOKEN, and optionally a
               GitHub token (KLIPP_GITHUB_TOKEN); without one, tickets open on GitHub, filled in,
               for the tester to submit.
-klipp box     The AI box: Claude Code and Codex as a service, with an API for apps and a web page
+klipp box     Smia: Claude Code and Codex as a service, with an API for apps and a web page
               to sign the agents in, make tokens and watch runs. Settings: KLIPP_ROOT,
               KLIPP_BOX_HOST, KLIPP_BOX_PORT, KLIPP_BOX_DATA, KLIPP_BOX_TOKENS, KLIPP_MAX_RUNS,
-              KLIPP_MODEL. See the README.`;
+              KLIPP_MODEL, KLIPP_BOX_IDENTITY_HEADER, KLIPP_BOX_ROLES_HEADER, KLIPP_BOX_REQUIRED_ROLE (required
+              with an identity header), KLIPP_BOX_PUBLIC_HOST. Only the sign-in proxy may reach the
+              port in identity mode. See the README.
+klipp smia    Alias for klipp box.`;
 
 const [command, ...rest] = process.argv.slice(2);
 const isHelp = (word: string | undefined) => word === '--help' || word === '-h';
@@ -26,19 +29,21 @@ const isHelp = (word: string | undefined) => word === '--help' || word === '-h';
 if (
   isHelp(command) ||
   command === 'help' ||
-  ((command === 'serve' || command === 'box') && rest.length === 1 && isHelp(rest[0]))
+  ((command === 'serve' || command === 'box' || command === 'smia') &&
+    rest.length === 1 &&
+    isHelp(rest[0]))
 ) {
   console.log(USAGE);
   process.exit(0);
 }
-if ((command !== 'serve' && command !== 'box') || rest.length) {
+if ((command !== 'serve' && command !== 'box' && command !== 'smia') || rest.length) {
   console.error(USAGE);
   process.exit(2);
 }
 
 try {
   let close: () => Promise<void>;
-  if (command === 'box') {
+  if (command === 'box' || command === 'smia') {
     const options = boxOptionsFromEnv(process.env, process.cwd());
     const box = await startBox(options);
     close = () => box.close();
@@ -49,7 +54,9 @@ try {
       ? `${box.url}/`
       : `http://127.0.0.1:${port}/`;
     console.log(
-      `The AI box is listening on ${box.url}, reading ${options.root}. Its page is at ${page}, and answers only at localhost, 127.0.0.1 or [::1].`,
+      options.identity
+        ? `Smia is listening on ${box.url}, reading ${options.root}, for allowed users named in ${options.identity.header}. Its page is at ${options.publicHost ? `https://${options.publicHost}/` : page}. Only the sign-in proxy may reach this port.`
+        : `Smia is listening on ${box.url}, reading ${options.root}. Its page is at ${page}, and answers only at localhost, 127.0.0.1 or [::1].`,
     );
   } else {
     const options = optionsFromEnv(process.env, process.cwd());
@@ -61,7 +68,7 @@ try {
     const who = options.identity
       ? `signed-in users named in ${options.identity.header}`
       : 'this machine only';
-    const where = options.box ? `the AI box at ${options.box.url}` : options.root;
+    const where = options.box ? `Smia at ${options.box.url}` : options.root;
     console.log(`Klipp is listening on ${server.url} for ${who}, with the agents in ${where}.`);
   }
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {

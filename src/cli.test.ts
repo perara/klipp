@@ -26,26 +26,29 @@ describe.skipIf(!existsSync(cli))('the klipp command', () => {
     expect(run.stderr).toContain('Usage: klipp serve | klipp box');
   });
 
-  it.each([['box'], ['serve']])('`%s --help` prints both commands and exits 0', (command) => {
-    for (const flag of ['--help', '-h']) {
-      const run = klipp([command, flag]);
-      expect(run.status, `${command} ${flag}`).toBe(0);
-      expect(run.stdout).toContain('klipp serve');
-      expect(run.stdout).toContain('klipp box');
-    }
-  });
+  it.each([['box'], ['smia'], ['serve']])(
+    '`%s --help` prints both commands and exits 0',
+    (command) => {
+      for (const flag of ['--help', '-h']) {
+        const run = klipp([command, flag]);
+        expect(run.status, `${command} ${flag}`).toBe(0);
+        expect(run.stdout).toContain('klipp serve');
+        expect(run.stdout).toContain('klipp box');
+      }
+    },
+  );
 
   it('still refuses extra words after a command', () => {
     expect(klipp(['box', 'now']).status).toBe(2);
   });
 
-  it('names the page at [::1] for a box listening there', async () => {
+  it.each(['box', 'smia'])('names the page at [::1] for %s listening there', async (command) => {
     const probe = createServer();
     await new Promise<void>((done) => probe.listen(0, '::1', done));
     const { port } = probe.address() as AddressInfo;
     await new Promise((done) => probe.close(done));
     const data = mkdtempSync(join(tmpdir(), 'klipp-cli-box-'));
-    const box = spawn(process.execPath, [cli, 'box'], {
+    const box = spawn(process.execPath, [cli, command], {
       env: {
         ...process.env,
         KLIPP_ROOT: data,

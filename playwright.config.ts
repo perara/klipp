@@ -46,6 +46,13 @@ export default defineConfig({
       gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     },
     {
+      command: 'node test/box-server.mjs',
+      env: { KLIPP_BOX_PORT: '5286', KLIPP_E2E_BOX_IDENTITY: '1' },
+      url: 'http://127.0.0.1:5286/healthz',
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
+    },
+    {
       // The example app with its agents in the box above: the whole chain, end to end.
       command: 'npx vite examples/react-app --host 127.0.0.1 --port 5285 --strictPort',
       env: { KLIPP_BOX_URL: BOX.replace(/\/$/, ''), KLIPP_BOX_TOKEN: 'e2e-box-token-0123456789' },
@@ -56,12 +63,12 @@ export default defineConfig({
   projects: [
     {
       name: 'dev',
-      testIgnore: /touch|remote|box/,
+      testIgnore: /touch|remote|box|smia/,
       use: { ...devices['Desktop Chrome'], baseURL: DEV, permissions, launchOptions },
     },
     {
       name: 'build',
-      testIgnore: /touch|remote|box/,
+      testIgnore: /touch|remote|box|smia/,
       use: { ...devices['Desktop Chrome'], baseURL: BUILD, permissions, launchOptions },
     },
     {
@@ -77,6 +84,18 @@ export default defineConfig({
         baseURL: BOX,
         permissions,
         launchOptions,
+      },
+    },
+    {
+      name: 'smia',
+      testMatch: /smia/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: 'http://127.0.0.1:5286/',
+        extraHTTPHeaders: {
+          'X-Klipp-Box-User': 'owner@example.com',
+          'X-Klipp-Box-Roles': 'tester, ai-box',
+        },
       },
     },
     {

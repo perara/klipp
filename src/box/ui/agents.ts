@@ -12,7 +12,18 @@ interface Session {
 }
 
 export async function agentsView(): Promise<View> {
-  const node = h('section', { 'aria-label': 'Agents' });
+  const cards = h('div', { class: 'agent-grid' });
+  const node = h(
+    'section',
+    { 'aria-label': 'Agents' },
+    h(
+      'div',
+      { class: 'section-heading' },
+      h('h2', {}, 'Agents'),
+      h('p', { class: 'muted' }, 'Your subscriptions. Ready for the next idea.'),
+    ),
+    cards,
+  );
   /** The sign-ins under way, by agent: one at a time each, and their card is kept as it is. */
   const underway = new Map<string, Session>();
   let stopped = false;
@@ -22,11 +33,11 @@ export async function agentsView(): Promise<View> {
     // Card by card in place: one with a sign-in under way is the same node, so its code field
     // (and the focus in it) survive another agent's refresh.
     agents.map(card).forEach((box, at) => {
-      const old = node.children[at];
-      if (!old) node.append(box);
+      const old = cards.children[at];
+      if (!old) cards.append(box);
       else if (old !== box) old.replaceWith(box);
     });
-    while (node.children.length > agents.length) node.lastElementChild?.remove();
+    while (cards.children.length > agents.length) cards.lastElementChild?.remove();
   }
 
   function card(agent: AgentStatus): HTMLElement {
@@ -45,17 +56,32 @@ export async function agentsView(): Promise<View> {
     );
     const box = h(
       'div',
-      { class: 'card', 'data-agent': agent.id },
+      { class: 'card agent-card', 'data-agent': agent.id },
       h(
         'div',
         { class: 'row' },
-        h('strong', {}, agent.label),
+        h('h3', {}, agent.label),
         agent.signedIn
-          ? h('span', { class: 'ok' }, 'Signed in')
-          : h('span', { class: 'bad' }, 'Not signed in'),
-        h('span', { class: 'muted' }, agent.version ?? 'not installed'),
+          ? h('span', { class: 'chip ok' }, 'Signed in')
+          : h('span', { class: 'chip bad' }, 'Not signed in'),
       ),
-      agent.problem ? h('p', { class: 'bad' }, agent.problem) : null,
+      h(
+        'p',
+        { class: 'agent-description muted' },
+        agent.id === 'claude'
+          ? 'Thoughtful answers, powered by Claude Code.'
+          : 'Repository insight, powered by Codex.',
+      ),
+      h('p', { class: 'agent-version muted' }, agent.version ?? 'Not installed'),
+      agent.problem
+        ? h('p', { class: 'notice bad' }, h('strong', {}, 'Needs attention · '), agent.problem)
+        : h(
+            'p',
+            { class: 'muted' },
+            agent.signedIn
+              ? 'Ready to work in the repository.'
+              : 'Sign in with your subscription to get started.',
+          ),
       h(
         'div',
         { class: 'row' },
@@ -139,7 +165,11 @@ export async function agentsView(): Promise<View> {
     ];
     if (state.code) nodes.push(h('p', {}, 'Enter this code there: ', h('code', {}, state.code)));
     if (state.needsCode) {
-      const input = h('input', { 'aria-label': 'Code from the sign-in page', autocomplete: 'off' });
+      const input = h('input', {
+        id: `login-code-${login}`,
+        'aria-label': 'Code from the sign-in page',
+        autocomplete: 'off',
+      });
       nodes.push(
         h(
           'form',
@@ -152,6 +182,7 @@ export async function agentsView(): Promise<View> {
               );
             },
           },
+          h('label', { for: `login-code-${login}` }, 'Code from the sign-in page'),
           input,
           h('button', { type: 'submit', class: 'primary' }, 'Send code'),
         ),
