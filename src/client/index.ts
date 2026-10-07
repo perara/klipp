@@ -14,6 +14,13 @@ export interface KlippGlobal {
 }
 
 declare global {
+  interface ImportMetaEnv {
+    /** True wherever the Klipp Vite plugin is active, including KLIPP=1 builds. */
+    readonly KLIPP: boolean;
+  }
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
   interface Window {
     klipp?: KlippGlobal;
   }

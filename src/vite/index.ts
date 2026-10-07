@@ -245,6 +245,14 @@ export default function klipp(options: KlippOptions = {}): Plugin {
     name: 'klipp',
     enforce: 'pre',
 
+    config(_config, { command }) {
+      return {
+        define: {
+          'import.meta.env.KLIPP': JSON.stringify(isEnabled(options.enabled, command, process.env)),
+        },
+      };
+    },
+
     configResolved(resolved) {
       config = resolved;
       enabled = isEnabled(options.enabled, resolved.command, process.env);
