@@ -255,9 +255,10 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
   to the tester to submit): who, which agent, how long, never what anyone typed. `klipp serve --help` lists its settings; `klipp/server` has the same
   as `serve()` and `createKlippMiddleware()`.
 
-## The AI box
+## Smia
 
-The agents as a service. `klipp box` is one place for the Claude Code and Codex logins, a web page
+**Where Klipp’s agents work.** Smia (“the forge” in Norwegian) keeps Claude Code and Codex
+ready for Klipp. `klipp smia` (an alias of `klipp box`) is one place for the Claude Code and Codex logins, a web page
 to sign them in, tokens for the apps that use them, and the runs to watch, live or afterwards.
 Apps ask it for answers over HTTP, so an app's own server needs no CLIs and no logins.
 
@@ -281,21 +282,91 @@ on the app's machine; the page's tools still run in the user's browser.
 
 - Set `KLIPP_BOX_HOST=0.0.0.0` so the published port reaches the box, and keep that port on
   loopback: publish it only on the host's `127.0.0.1`, or put the box on a Docker network shared
-  only with the apps that call it. The page has no sign-in and shares its port with `/v1`, so
-  whoever can reach the port can use the page.
+  only with the apps that call it. Without identity mode, the page has no sign-in and shares its
+  port with `/v1`, so whoever can reach the port can use the page.
 - Put `/data` (`KLIPP_BOX_DATA`) on a volume, and mount the source read-only.
 - Codex needs the same seccomp and AppArmor changes as under
   [On a shared server](#on-a-shared-server).
-- The page answers only to localhost names, so reach it through
+- By default the page answers only to localhost names, so reach it through
   `ssh -L 8790:<box>:8790 <host>` and open `http://127.0.0.1:8790/`.
+
+**On the web, behind sign-in:**
+
+```bash
+KLIPP_ROOT=/srv/app KLIPP_BOX_IDENTITY_HEADER=x-klipp-box-user \
+  KLIPP_BOX_ROLES_HEADER=x-klipp-box-roles KLIPP_BOX_REQUIRED_ROLE=ai-box \
+  KLIPP_BOX_PUBLIC_HOST=box.uya.no npx klipp smia
+```
+
+The reverse proxy authenticates the owner through your sign-in service, then **overwrites**
+`x-klipp-box-user` with its validated e-mail and `x-klipp-box-roles` with its validated roles.
+Smia requires both a single e-mail and the exact, case-sensitive `ai-box` role for every page,
+asset and UI API request, including streams. Missing or ambiguous identity gets 401; missing,
+ambiguous or insufficient roles get 403. Header names are case-insensitive. Roles are a single
+comma-separated header, with optional surrounding spaces; each role is 1–128 letters, digits,
+`.`, `_`, `:` or `-`, starting with a letter or digit. Empty entries and duplicate roles are
+refused. Smia refuses to start with an identity header unless the roles header and a valid
+required role are configured. Access is role-based; there is no e-mail allow-list.
+
+`KLIPP_BOX_PUBLIC_HOST` adds that exact hostname (and HTTPS port 443) to the localhost names.
+It requires identity mode, accepts only `https://box.uya.no` as the public Origin, and leaves
+the page's CSRF header check in place. The page shows the signed-in identity; agent sign-in/out
+and token creation/revocation write JSON audit lines with the actor, action and target, never
+secrets or login output. Logins that finish later retain the initiating identity.
+
+**Only the reverse proxy may reach the port in identity mode.** These headers are assertions,
+not credentials: any direct caller can forge them. Keep the port on loopback for a same-host
+proxy, or on a private network accessible only to the proxy, and send app requests through it
+too. Never publish this port directly. The proxy must replace browser-supplied identity/roles
+headers on every request, including assets and streams. Do not cache authenticated responses.
+
+For example, an Nginx proxy using `auth_request` (inside a TLS `server` for `box.uya.no`):
+
+```nginx
+# Adapt the verify endpoint and response-header names to your sign-in service.
+# It must return 2xx only after validating the session, with one e-mail and role list.
+location = /_smia_auth {
+    internal;
+    proxy_pass http://sign-in-service/verify;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URL https://$host$request_uri;
+    proxy_set_header X-Klipp-Box-User "";
+    proxy_set_header X-Klipp-Box-Roles "";
+}
+location / {
+    auth_request /_smia_auth;
+    auth_request_set $smia_user $upstream_http_x_auth_request_email;
+    auth_request_set $smia_roles $upstream_http_x_auth_request_roles;
+    proxy_set_header Host box.uya.no;
+    proxy_set_header X-Klipp-Box-User $smia_user;
+    proxy_set_header X-Klipp-Box-Roles $smia_roles;
+    proxy_buffering off; # live login and run streams
+    proxy_cache off;
+    proxy_pass http://127.0.0.1:8790;
+}
+# Apps authenticate with their bearer token; a browser identity cannot replace it.
+location /v1/ {
+    proxy_set_header Host box.uya.no;
+    proxy_set_header X-Klipp-Box-User "";
+    proxy_set_header X-Klipp-Box-Roles "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_pass http://127.0.0.1:8790;
+}
+```
+
+Configure the sign-in service's redirect to its login page for unauthenticated visitors;
+Smia itself explains 401/403 refusals and does not implement passwords or sessions.
+The command, `KLIPP_BOX_*` settings, data paths and protocol v1 keep their technical names.
 
 **What it keeps and refuses:**
 
-- **The page answers only to localhost names, and only to its own page.** The page and its
+- **By default the page answers only to localhost names, and only to its own page.** The page and its
   `/ui/api/` answer requests for `localhost`, `127.0.0.1` or `[::1]` and refuse any other name
   with 403. Changes (signing in, tokens) also need the header the page itself sends, which another
   website can't add. That stops other websites and DNS rebinding.
-- **The page has no sign-in.** It checks the name a request asks for, not who connected: anyone
+- **Without identity mode the page has no sign-in.** It checks the name a request asks for, not who connected: anyone
   who can reach the port can ask for `localhost` and make tokens or sign the agents out. Keep the
   port on loopback, or on a Docker network shared only with the apps that call the box. An app's
   token guards `/v1`, not the page.
@@ -359,7 +430,7 @@ that you alone use, or use API keys with the apps other people use.
 | `chat.pairingCode`        | random per start                  | A fixed pairing code (10+ characters), for a shared test environment.  |
 | `chat.passEnv`            | `[]`                              | More environment variables to pass to the agent, by name.              |
 | `chat.maxRuns`            | `4`                               | Agent runs at once, across all conversations.                          |
-| `chat.box`                | none                              | Run the agents in an [AI box](#the-ai-box): `{ url, token? }`.         |
+| `chat.box`                | none                              | Run the agents in an [Smia](#smia): `{ url, token? }`.                 |
 | `chat`                    | `{}`                              | `false` turns the chat off and keeps pointing and links.               |
 | `launcher`                | `bottom-right`                    | Corner for the paperclip, or `false` for the hotkey only.              |
 | `offset`                  | `{ x: 0, y: 0 }`                  | Pixels in from the corner, to clear things the app keeps there.        |
@@ -390,7 +461,7 @@ talks, leans in while you point, and droops when something goes wrong.
 
 ```bash
 npm run check        # format, build, lint, typecheck, unit tests and package exports (CI `check`)
-npm run test:e2e     # the example app under the dev server, a production build, touch, a paired device, and the AI box
+npm run test:e2e     # the example app under the dev server, a production build, touch, a paired device, and Smia
 npm run test:compat  # the packed package against Vite 5, 6, 7 and 8
 npm run demo:record  # re-record the demo GIF above (needs ffmpeg)
 ```

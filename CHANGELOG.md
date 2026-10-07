@@ -7,6 +7,21 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-07
+
+### Added
+
+- Smia, “the forge”: the box's new name and setup page, with Klipp's paperclip, bundled Nunito,
+  agent status cards, tokens and readable run logs, light/dark themes, phone layouts, keyboard
+  focus and empty states. `klipp smia` is an alias for `klipp box`; existing commands, settings,
+  data paths and protocol v1 remain compatible.
+- Optional trusted-proxy identity mode for Smia's page: `KLIPP_BOX_IDENTITY_HEADER`,
+  `KLIPP_BOX_ROLES_HEADER`, required `KLIPP_BOX_REQUIRED_ROLE`, and `KLIPP_BOX_PUBLIC_HOST`.
+  Every UI request needs a single validated e-mail and the exact role. Invalid configuration
+  refuses startup; duplicate/ambiguous headers are rejected. The port must be accessible only
+  to the reverse proxy. CSRF protection stays, public Origins require HTTPS, and `/v1` remains
+  bearer-token-only. Agent and token changes log the initiating identity without secrets.
+
 ## [0.8.1] - 2026-10-06
 
 ### Changed
@@ -233,7 +248,8 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/perara/klipp/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/perara/klipp/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/perara/klipp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/perara/klipp/compare/v0.6.1...v0.7.0
