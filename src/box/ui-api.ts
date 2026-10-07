@@ -4,11 +4,15 @@ import { fromKlipp } from '../server/guard.js';
 import { json, readJson } from '../server/http.js';
 import type { Runner } from '../server/runner.js';
 import type { AgentId } from '../shared/protocol.js';
+import type { BoxIdentity } from './identity.js';
+import type { BoxAudit } from './server.js';
 import type { AgentStatus, Logins } from './logins.js';
 import type { RunLog } from './runlog.js';
 import type { Tokens } from './tokens.js';
 
 export interface UiDeps {
+  identity?: BoxIdentity | undefined;
+  audit?: ((entry: BoxAudit) => void) | undefined;
   runner: Runner;
   logins: Logins;
   tokens: Tokens;
@@ -50,6 +54,7 @@ function partsOf(path: string): string[] | undefined {
 
 /** What the box's own web page calls: agents and their sign-in, tokens, runs. */
 export function createUiApi(deps: UiDeps) {
+  const auditedLogins = new WeakSet<object>();
   const keepAliveMs = deps.keepAliveMs ?? 15_000;
   const agents = (): Promise<AgentStatus[]> =>
     Promise.all(
@@ -70,8 +75,16 @@ export function createUiApi(deps: UiDeps) {
     );
 
   /** Answers a `/ui/api/…` request; false when no route matches. */
-  async function handle(req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+  async function handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    path: string,
+    user?: string,
+  ): Promise<boolean> {
     const method = req.method ?? 'GET';
+    const audit = (action: BoxAudit['action'], target: string) => {
+      if (user) deps.audit?.({ user, action, target });
+    };
     // Another site's page can fire requests at localhost, even blind GETs that start CLIs or hold a
     // stream open: the browser says where a request comes from, and only the page itself passes.
     const site = req.headers['sec-fetch-site'];
@@ -79,7 +92,7 @@ export function createUiApi(deps: UiDeps) {
       json(res, 403, { error: 'Not allowed.' });
       return true;
     }
-    if (method !== 'GET' && !fromKlipp(req)) {
+    if (method !== 'GET' && !(deps.identity ? deps.identity.fromPage(req) : fromKlipp(req))) {
       json(res, 403, { error: 'Not allowed.' });
       return true;
     }
@@ -88,13 +101,30 @@ export function createUiApi(deps: UiDeps) {
     if (parts.length > 3) return false;
     const [section, id, action] = parts;
 
+    if (section === 'session' && method === 'GET' && !id) {
+      return (json(res, 200, { user: user ?? null }), true);
+    }
+
     if (section === 'agents') {
       if (method === 'GET' && !id) return (json(res, 200, await agents()), true);
       if (method === 'POST' && isAgent(id) && action === 'login') {
-        return (json(res, 200, { login: deps.logins.start(id).id }), true);
+        const login = deps.logins.start(id);
+        if (user && !auditedLogins.has(login)) {
+          auditedLogins.add(login);
+          audit('agent.login.start', id);
+          const stop = login.subscribe((state) => {
+            if (state.state === 'done' || state.state === 'failed') {
+              audit(state.state === 'done' ? 'agent.login.done' : 'agent.login.failed', id);
+              // subscribe immediately reports the current state, including a finished login.
+              queueMicrotask(() => stop?.());
+            }
+          });
+        }
+        return (json(res, 200, { login: login.id }), true);
       }
       if (method === 'POST' && isAgent(id) && action === 'logout') {
         await deps.logins.logout(id);
+        audit('agent.logout', id);
         return (empty(res), true);
       }
     }
@@ -119,7 +149,11 @@ export function createUiApi(deps: UiDeps) {
           true
         );
       }
-      if (method === 'DELETE' && !action) return (login.cancel(), empty(res), true);
+      if (method === 'DELETE' && !action) {
+        login.cancel();
+        audit('agent.login.cancel', login.agent);
+        return (empty(res), true);
+      }
     }
 
     if (section === 'tokens') {
@@ -128,15 +162,19 @@ export function createUiApi(deps: UiDeps) {
         const body = await readJson(req);
         try {
           const name = typeof body.name === 'string' ? body.name.trim() : '';
-          json(res, 200, { token: deps.tokens.create(name) });
+          const token = deps.tokens.create(name);
+          audit('token.create', name);
+          json(res, 200, { token });
         } catch (error) {
           json(res, 400, { error: error instanceof Error ? error.message : String(error) });
         }
         return true;
       }
       if (method === 'DELETE' && id && !action) {
-        if (deps.tokens.revoke(id)) empty(res);
-        else json(res, 404, { error: 'No such token, or it comes from the environment.' });
+        if (deps.tokens.revoke(id)) {
+          audit('token.revoke', id);
+          empty(res);
+        } else json(res, 404, { error: 'No such token, or it comes from the environment.' });
         return true;
       }
     }

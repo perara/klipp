@@ -19,6 +19,15 @@ const box = await startBox({
   data,
   port: Number(process.env.KLIPP_BOX_PORT ?? 5284),
   tokens: 'example=e2e-box-token-0123456789',
+  ...(process.env.KLIPP_E2E_BOX_IDENTITY === '1'
+    ? {
+        identity: {
+          header: 'X-Klipp-Box-User',
+          rolesHeader: 'X-Klipp-Box-Roles',
+          requiredRole: 'ai-box',
+        },
+      }
+    : {}),
   commands: { claude: fake, codex: fake },
 });
 // Playwright stops the box with SIGTERM (see playwright.config.ts): the data folder goes first,

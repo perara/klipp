@@ -8,8 +8,24 @@ export async function runsView(id: string | undefined): Promise<View> {
 
 async function listView(): Promise<View> {
   const runs = await get<RunSummary[]>('/ui/api/runs');
-  const node = h('section', { 'aria-label': 'Runs' });
-  if (!runs.length) node.append(h('p', { class: 'muted' }, 'No runs yet.'));
+  const node = h(
+    'section',
+    { 'aria-label': 'Runs', class: 'card table-card' },
+    h(
+      'div',
+      { class: 'section-heading' },
+      h('h2', {}, 'Runs'),
+      h('p', { class: 'muted' }, 'The work, live and afterwards.'),
+    ),
+  );
+  if (!runs.length)
+    node.append(
+      h(
+        'p',
+        { class: 'empty muted' },
+        'No runs yet. Connect an app and ask Klipp a question to start the first one.',
+      ),
+    );
   else
     node.append(
       h(
@@ -58,11 +74,11 @@ function runView(id: string): View {
   const status = h('p', { class: 'muted' }, 'Loading…');
   const lost = h('p', { class: 'bad', role: 'alert' });
   let started = false;
-  const answer = h('pre', { class: 'answer' });
-  const steps = h('div');
+  const answer = h('pre', { class: 'answer', tabindex: '0', 'aria-label': 'Run answer' });
+  const steps = h('div', { class: 'run-steps' });
   const node = h(
     'section',
-    { 'aria-label': 'Run' },
+    { 'aria-label': 'Run', class: 'card run-detail' },
     h('p', {}, h('a', { href: '#runs' }, '← All runs')),
     status,
     lost,

@@ -4,7 +4,10 @@ import { get, messageOf, send, type View } from './api.js';
 
 export async function tokensView(): Promise<View> {
   const name = h('input', {
+    id: 'app-name',
     'aria-label': 'Name of the app',
+    required: '',
+    maxlength: '40',
     placeholder: 'An app, such as square-dev',
   });
   const shown = h('div');
@@ -13,6 +16,11 @@ export async function tokensView(): Promise<View> {
   // What the box refused, apart from `shown` so a refusal never wipes a token not yet copied.
   const refused = h('div', { class: 'bad', role: 'alert' });
   const rows = h('tbody');
+  const empty = h(
+    'p',
+    { class: 'empty muted' },
+    'No tokens yet. Create one to connect your first app.',
+  );
 
   async function refresh() {
     const tokens = await get<TokenInfo[]>('/ui/api/tokens');
@@ -21,6 +29,7 @@ export async function tokensView(): Promise<View> {
       shown.replaceChildren();
       shownFor = undefined;
     }
+    empty.hidden = tokens.length > 0;
     rows.replaceChildren(
       ...tokens.map((token) =>
         h(
@@ -88,22 +97,41 @@ export async function tokensView(): Promise<View> {
     'section',
     { 'aria-label': 'Tokens' },
     h(
+      'div',
+      { class: 'section-heading' },
+      h('h2', {}, 'Tokens'),
+      h('p', { class: 'muted' }, 'A private key for each app. Shown once, stored hashed.'),
+    ),
+    h(
       'form',
-      { class: 'row card', onsubmit: (event: Event) => (event.preventDefault(), void act(create)) },
-      name,
-      h('button', { type: 'submit', class: 'primary' }, 'Create token'),
+      {
+        class: 'token-form card',
+        onsubmit: (event: Event) => (event.preventDefault(), void act(create)),
+      },
+      h('label', { for: 'app-name' }, 'Name of the app'),
+      h(
+        'div',
+        { class: 'row' },
+        name,
+        h('button', { type: 'submit', class: 'primary' }, 'Create token'),
+      ),
     ),
     shown,
     refused,
     h(
-      'table',
-      {},
+      'div',
+      { class: 'card table-card' },
+      empty,
       h(
-        'thead',
+        'table',
         {},
-        h('tr', {}, h('th', {}, 'App'), h('th', {}, 'Last used'), h('th', {}, 'Action')),
+        h(
+          'thead',
+          {},
+          h('tr', {}, h('th', {}, 'App'), h('th', {}, 'Last used'), h('th', {}, 'Action')),
+        ),
+        rows,
       ),
-      rows,
     ),
   );
   await refresh();

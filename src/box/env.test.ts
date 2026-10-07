@@ -25,6 +25,10 @@ describe('boxOptionsFromEnv', () => {
           KLIPP_BOX_TOKENS: 'klipp=klipp-token-0123456789',
           KLIPP_MAX_RUNS: '3',
           KLIPP_MODEL: 'opus',
+          KLIPP_BOX_IDENTITY_HEADER: 'X-Owner',
+          KLIPP_BOX_ROLES_HEADER: 'X-Roles',
+          KLIPP_BOX_REQUIRED_ROLE: 'ai-box',
+          KLIPP_BOX_PUBLIC_HOST: 'box.example.com',
         },
         '/x',
       ),
@@ -36,6 +40,8 @@ describe('boxOptionsFromEnv', () => {
       maxRuns: 3,
       tokens: 'klipp=klipp-token-0123456789',
       model: 'opus',
+      identity: { header: 'X-Owner', rolesHeader: 'X-Roles', requiredRole: 'ai-box' },
+      publicHost: 'box.example.com',
     });
     expect(() => boxOptionsFromEnv({ KLIPP_BOX_PORT: 'x' }, '/x')).toThrow(/KLIPP_BOX_PORT/);
   });

@@ -7,14 +7,14 @@ import { join } from 'node:path';
  * style), and its own API. The tab icon is a data URL.
  */
 const CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI box</title>
+<title>Smia · Klipp</title>
 <link rel="icon" href="data:,">
 <script type="module" src="/ui/box/ui/app.js"></script>
 </head>
@@ -40,11 +40,12 @@ export function servePage(res: ServerResponse) {
 
 /** Serves one of the UI's scripts from the built package; false when the path isn't one. */
 export function serveAsset(res: ServerResponse, path: string, assets: string): boolean {
-  const file = ASSET.exec(path)?.[1];
+  const font = path === '/ui/box/ui/assets/nunito.woff2';
+  const file = font ? 'box/ui/assets/nunito.woff2' : ASSET.exec(path)?.[1];
   if (!file) return false;
   readFile(join(assets, file)).then(
     (body) => {
-      headers(res, 'text/javascript; charset=utf-8');
+      headers(res, font ? 'font/woff2' : 'text/javascript; charset=utf-8');
       res.end(body);
     },
     () => {
@@ -53,4 +54,14 @@ export function serveAsset(res: ServerResponse, path: string, assets: string): b
     },
   );
   return true;
+}
+
+/** Static refusal: no authenticated scripts needed to explain how to regain access. */
+export function serveRefusal(res: ServerResponse, status: number, message: string) {
+  headers(res, 'text/html; charset=utf-8');
+  res.statusCode = status;
+  // Messages are fixed server strings, never header values or other user input.
+  res.end(
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Smia · Access required</title><body><main><h1>Smia</h1><h2>${status === 401 ? 'Sign-in required' : 'Access denied'}</h2><p>${message}</p></main></body></html>`,
+  );
 }
