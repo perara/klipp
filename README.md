@@ -57,8 +57,7 @@ by your dev server with your own login. There are no API keys and nothing to hos
     </td>
     <td width="33%" valign="top">
       <h4>🔒 Yours, and read-only</h4>
-      The agent runs on your machine with your login and can't change a file. It never sees the
-      text on the page, and nothing is filed until someone clicks <b>File ticket</b>.
+      The agent runs on your machine with your login and can't change a file. Page text stays redacted; screenshots require approval, and nothing is filed until someone clicks <b>File ticket</b>.
     </td>
   </tr>
 </table>
@@ -74,7 +73,7 @@ when the project allows it, so allow it for your project's own dependencies firs
 
 ```bash
 npm config set allow-remote root --location=project
-npm install -D https://github.com/perara/klipp/releases/download/v0.8.1/klipp-0.8.1.tgz
+npm install -D https://github.com/perara/klipp/releases/download/v0.10.0/klipp-0.10.0.tgz
 ```
 
 The first line writes `allow-remote=root` to the project's `.npmrc`; commit it with the lockfile,
@@ -116,13 +115,14 @@ It's always off under Vitest.
 </p>
 
 The dev server runs the agent once per message and resumes its session, so the conversation
-carries on. The agent reaches the page only through Klipp's three tools, served to it over MCP on
+carries on. The agent reaches the page only through Klipp's four tools, served to it over MCP on
 a loopback port, behind a token that lives as long as the dev server:
 
 | Tool               | What it does                                                                             |
 | ------------------ | ---------------------------------------------------------------------------------------- |
 | `point_at_element` | Asks the tester to click something; returns its ID, code location, components and state. |
 | `inspect_element`  | Looks up an element by its ID, such as something underneath the one the tester clicked.  |
+| `take_screenshot`  | Shows a redacted local preview; returns an image only after the tester approves it.      |
 | `propose_ticket`   | Shows the ticket for the tester to file, once it has everything its type needs.          |
 
 ## Tickets
@@ -140,8 +140,9 @@ browser, so nobody has to ask "where?" or "which version?". The card shows all o
 anyone files. Change the labels with `chat.labels`.
 
 Klipp files on github.com, or on GitHub Enterprise when `gh` is logged in to that host
-(`gh auth login --hostname`). A token is only ever sent to the host it belongs to. With no token
-for github.com, the server sends nothing to GitHub: the tester's browser opens GitHub's new-issue
+(`gh auth login --hostname`). A token is only ever sent to the host it belongs to. With a box configured, filing uses a local
+`KLIPP_GITHUB_TOKEN` (or `GITHUB_TOKEN`/`GH_TOKEN`) first, then the GitHub login in Smia. The local
+`gh` login is used when no box is configured. If neither server nor box is signed in to GitHub: the tester's browser opens GitHub's new-issue
 page in a new tab, filled in with the ticket and its labels, and the tester submits it, signed in
 as themselves. A body too long for a link is cut short, with a note saying so. (GitHub keeps the
 labels only for people who may triage the repository.)
@@ -206,14 +207,63 @@ Anything else that draws (a chart, a game, another map library) takes an adapter
 `find(key, canvas)` finds it again for a link. Map features are described by their layer,
 source, geometry and id; property values stay out unless you name them in `reveal`.
 Registering does nothing where Klipp isn't running. To keep it out of production bundles
-entirely, register from a dynamic import behind `if (import.meta.env.DEV)`.
+entirely, register from a dynamic import behind `if (import.meta.env.KLIPP)`. The Vite plugin
+replaces `import.meta.env.KLIPP` with the boolean `true` whenever it is active, including a
+`KLIPP=1 vite build`, and `false` when disabled. `import type {} from 'klipp/client'` brings its
+`ImportMetaEnv` declaration into the app; unlike `DEV`, the flag enables production picking:
+
+```ts
+import type {} from 'klipp/client';
+
+if (import.meta.env.KLIPP) {
+  const { registerCanvas, maplibreTargets } = await import('klipp/canvas');
+  registerCanvas(map.getCanvas(), maplibreTargets(map));
+}
+```
+
+### Screenshots, with consent
+
+Ask Klipp for a screenshot, or let the agent request one with `take_screenshot`. It captures the
+visible viewport, an optional Klipp element `id`, or a viewport `region: { x, y, width, height }`.
+Every request shows its own local preview and **Approve / Don't send** controls in the chat.
+Closing the chat or pressing Esc denies it. No capture bytes reach the chat server or agent
+before approval, and an approval never carries over to the next request. Approved images arrive
+as MCP image content for both Claude and Codex, including agents in Smia.
+
+DOM capture is bundled, uses SVG foreignObject and requires no browser screen-sharing permission.
+Text is replaced with bullets, form values and ordinary images/video are hidden, and subtrees
+marked `data-klipp-private` are omitted. Klipp itself is excluded. Canvas pixels **cannot be
+redacted automatically**: review the preview for labels, account details and other private data.
+Mark a canvas or its container `data-klipp-private` to exclude it entirely. Capture is capped at
+1600 pixels on either axis and 500 KB of JPEG; excessive detail is downscaled further.
+
+A registered `CanvasAdapter` can provide `screenshot(canvas)`, returning a PNG/JPEG/WebP data URL
+(or a promise for one). For WebGL, render and read pixels together in that hook, or retain a
+snapshot immediately after each render. Otherwise the browser may have cleared its drawing
+buffer; `preserveDrawingBuffer: true` is another option, with a performance cost. A normal 2D
+canvas is read automatically. Tainted canvases are omitted; cross-origin frames, external media,
+CSS background images, generated content and SVG graphics are omitted. Complex layout, shadow
+DOM and system fonts may differ from the page. Capture is a diagnostic illustration, not a
+pixel-identical browser screenshot.
+
+Scripts and styles stay self-hosted, with no CDN or inline attributes/scripts. A strict CSP must
+allow `data:` in **img-src** for the local SVG and canvas rasterisation (for example
+`img-src 'self' data:`); keep `script-src 'self'` and `style-src 'self'`. Captures remain local
+while previewing. Without that image allowance capture fails with a message; it never bypasses
+CSP.
+
+Ticket cards show the newest three approved screenshots and checked attachment controls. Uncheck
+any image to leave it out. Filing uploads selected images only after **File ticket**. The server
+looks them up by approved tool-call IDs in that user's conversation, and does not accept image
+bytes on the ticket endpoint. Without a GitHub login, the prefilled-link fallback carries text
+only; screenshots are not uploaded.
 
 ## Privacy and safety
 
-- **No page text.** The agent sees structure and state, never the text on the page or form values. Console errors are sent by name and message; objects logged with them are named, not opened. Map features and 3D objects are described by their layer, geometry, type and name; their properties' values only when the app names them in `reveal`. Query values in addresses are blanked, except the ones you list in `keepQuery`.
+- **Redacted by default.** The agent sees structure and state, never DOM text or form values. Screenshots require an explicit preview approval every time; canvas pixels in an approved image can contain text. Console errors are sent by name and message; objects logged with them are named, not opened. Map features and 3D objects are described by their layer, geometry, type and name; their properties' values only when the app names them in `reveal`. Query values in addresses are blanked, except the ones you list in `keepQuery`.
 - **Read-only agents, kept to your repository.** Claude runs `--restricted` with only Read, Grep and Glob: no shell, no web, and `.env`, key and credential files are denied. Codex runs in a sandbox that reads only the repository and the system files programs need, and writes nothing; its commands get only a core environment. Neither loads your own settings or other MCP servers, and neither gets the dev server's environment beyond what it needs to start and log in.
 - **Your browser only.** The chat answers a browser on this machine at `localhost`, from the page itself. Other names, tunnels and proxies are turned away, even from loopback, so a site that rebinds its name to `127.0.0.1` gets nothing. With `chat.allowRemote`, other devices pair once with the code the dev server prints.
-- **Nothing filed without a click.** The card shows the whole ticket first, and the server files only the ticket the agent proposed, once. Without a GitHub token it hands that ticket back once, as a filled-in GitHub link, for the tester to submit.
+- **Nothing filed without a click.** The card shows the whole ticket first, and the server files only the ticket the agent proposed, once. Without a local token or box GitHub login it hands that ticket back once, as a filled-in GitHub link, for the tester to submit.
 - **Out of your page's way.** Klipp's key, pointer and focus events stop at its own root, so your page's handlers don't see them (only listeners on `window` or `document` in the capture phase, which see everything, still do).
 - **Strict-CSP friendly.** Klipp uses no `innerHTML`, no inline styles and no inline scripts.
 
@@ -231,9 +281,10 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
   KLIPP_REPO=https://github.com/owner/app npx klipp serve
 ```
 
-- **Tickets:** with no GitHub token, as in a container without `gh`, each ticket opens on GitHub
-  in the tester's browser, filled in, and they submit it there as themselves: no token to manage.
-  Set `KLIPP_GITHUB_TOKEN` to have the server file them instead. `KLIPP_REPO` names the
+- **Tickets:** configure `KLIPP_BOX_URL`/`KLIPP_BOX_TOKEN` and sign in to GitHub on Smia once;
+  Klipp files in the chat, without another tab or a manually managed GitHub token. A local
+  `KLIPP_GITHUB_TOKEN` takes precedence. Without either login, the tester gets a prefilled GitHub
+  page to submit as themselves. `KLIPP_REPO` names the
   repository when the source has no git remote.
 
 - **Who:** the proxy names the signed-in user in a header it sets itself (and removes from what
@@ -258,7 +309,7 @@ KLIPP_ROOT=/srv/app KLIPP_HOST=0.0.0.0 KLIPP_IDENTITY_HEADER=x-klipp-user KLIPP_
 ## Smia
 
 **Where Klipp’s agents work.** Smia (“the forge” in Norwegian) keeps Claude Code and Codex
-ready for Klipp. `klipp smia` (an alias of `klipp box`) is one place for the Claude Code and Codex logins, a web page
+ready for Klipp. `klipp smia` (an alias of `klipp box`) is one place for the Claude Code, Codex and GitHub logins, a web page
 to sign them in, tokens for the apps that use them, and the runs to watch, live or afterwards.
 Apps ask it for answers over HTTP, so an app's own server needs no CLIs and no logins.
 
@@ -358,6 +409,32 @@ location /v1/ {
 
 Configure the sign-in service's redirect to its login page for unauthenticated visitors;
 Smia itself explains 401/403 refusals and does not implement passwords or sessions.
+**GitHub sign-in and attachments.** The third card uses `gh auth login --hostname github.com
+--git-protocol https --web --insecure-storage`: copy the device code, open GitHub's link and
+approve access there. No GitHub token is shown in the page, returned to apps, supplied to agents
+or written to audit logs. GitHub sign-in/start/completion/cancel/sign-out use the same audit
+lines as the other cards (target `github`); issue filing logs `issue.filed`, the app name and URL.
+Sign out in the card to remove the box's login. This removes local credentials, not the OAuth
+application authorization in GitHub's account settings.
+
+The box image **must install `gh`** alongside Claude/Codex. The deployment Dockerfile belongs
+to the SQUARE repository; update that image there (Debian example: `apt-get install gh`). Klipp
+ships no Dockerfile. Keep `KLIPP_BOX_DATA=/data` on the persistent private volume: GitHub's
+`GH_CONFIG_DIR` is `/data/github`, and its isolated `HOME` is `/data/github-home`. The CLI stores
+its OAuth token in that config folder, without a keyring; protect and back up the volume as a
+credential store. Host `GH_TOKEN`/`GITHUB_TOKEN` and host keyrings are not inherited by this login.
+The login needs repository write access, including **contents** and **issues** for attachments;
+organization SSO authorization and repository permissions still apply.
+
+GitHub's issue REST API has no attachment upload. On filing, Klipp creates a `klipp-attachments`
+branch from the repository's default branch if needed, commits each approved screenshot under
+`screenshots/<random-id>.jpg` with the contents API, then embeds links pinned to those commits
+in the issue body. It does not modify the default branch. Images inherit the repository's
+visibility: in a public repository they become public. Deleting an issue or signing out does
+not erase image commits; apply your repository's retention policy. Branch protections can
+prevent uploads. If upload or filing fails, some commits may already exist; check the repository
+before proposing another ticket.
+
 The command, `KLIPP_BOX_*` settings, data paths and protocol v1 keep their technical names.
 
 **What it keeps and refuses:**
@@ -377,7 +454,7 @@ The command, `KLIPP_BOX_*` settings, data paths and protocol v1 keep their techn
   Amazon Bedrock) doesn't count as signed in.
 - **Tokens are stored hashed.** A new token is shown once; only its SHA-256 is kept.
 - **Run logs are private.** The data folder is mode 0700. The box's own files (the tokens and
-  each run's log) are 0600; the CLIs' login files in `claude/` and `codex/` keep the modes the
+  each run's log and issue receipts) are 0600; the CLIs' login files in `claude/` and `codex/` keep the modes the
   CLIs give them, inside those 0700 folders. A run is one file with the app's name, the message,
   every event and each tool call with its answer; the newest 200 are kept.
 - **Read-only agents,** as everywhere else in Klipp. A caller can't change the repository, the
@@ -386,11 +463,12 @@ The command, `KLIPP_BOX_*` settings, data paths and protocol v1 keep their techn
 **Protocol v1.** Every request carries `Authorization: Bearer <token>`; a missing or unknown token
 gets 401.
 
-| Endpoint                         | What it does                                                                              |
-| -------------------------------- | ----------------------------------------------------------------------------------------- |
-| `GET /v1/agents`                 | Per agent: `available`, with a `problem` (not signed in is one), and the `preferred` one. |
-| `POST /v1/runs`                  | Starts a run and streams it as NDJSON; body below.                                        |
-| `POST /v1/runs/:run/tools/:call` | Answers a tool call with `{ "content": "…", "isError"?: true }`; 204.                     |
+| Endpoint                         | What it does                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `GET /v1/agents`                 | Per agent: `available`, with a `problem` (not signed in is one), and the `preferred` one.                          |
+| `POST /v1/issues`                | Files a proposal once; optional approved screenshot attachments, with the box GitHub login.                        |
+| `POST /v1/runs`                  | Starts a run and streams it as NDJSON; body below.                                                                 |
+| `POST /v1/runs/:run/tools/:call` | Answers a tool call with `{ "content": "…", "isError"?: true, "image"?: { mimeType, data, width, height } }`; 204. |
 
 A run is `{ agent, system, message, session?, model?, tools }`. `tools` are the page tools the app
 answers: up to 16, each `{ name, description, inputSchema }` with a name like `point_at_element`.
@@ -413,6 +491,29 @@ The stream ends after `done` or `error`, and the CLI then has 10 seconds to exit
 caller closes the stream before its end, the run is stopped and any pending tool call is answered
 "The turn ended." A `session` continues only for the app (the token's name) that started it; for
 any other app, the run starts a new session.
+
+`POST /v1/issues` files an approved app-held proposal using the box's GitHub login:
+
+```json
+{
+  "id": "stable-proposal-id",
+  "repo": "https://github.com/owner/repo",
+  "title": "The button does nothing",
+  "body": "What happened and how to reproduce it",
+  "labels": ["bug", "klipp"],
+  "attachments": [{ "mimeType": "image/jpeg", "data": "base64", "width": 800, "height": 600 }]
+}
+```
+
+Apps, not agents, call this endpoint after the user's filing click. The token authorizes the app
+to file in repositories the GitHub login can access. `id` is required and namespaced by app.
+Receipts in `issues.json` survive restarts: a completed duplicate returns the same `{ "url" }`,
+an in-flight, altered or uncertain duplicate returns 409 and never files again. Missing GitHub
+login returns 409 with `code: "github_signed_out"`, so Klipp can use its prefilled-link fallback.
+Other errors do not silently open a second filing path. Issue requests allow up to three 500 KB
+JPEG/WebP attachments and a 2.1 MB JSON body; image tool replies use the existing 1 MB limit.
+Receipts contain hashes and URLs, never tokens or image data, and must be kept to preserve
+once-only behavior. Authenticate every `/v1` request as usual.
 
 **One person's box.** It signs in with your own Claude and ChatGPT subscriptions. Anthropic's terms
 don't allow routing other people's requests through a subscription, so give the box only to apps

@@ -38,9 +38,13 @@ What it does to keep that safe:
 - **Arguments, not a shell.** Agents are started with `child_process.spawn` and an argument
   list, never through a shell. The message goes in on stdin. The MCP token is passed in a file
   only you can read, or in an environment variable, never on the command line.
-- **No page text.** The agent gets the page's structure and state, never its text or form
+- **Redacted page text.** The agent gets the page's structure and state, never its text or form
   values. Console errors go by name and message; objects logged with them are named, not
-  serialized. Map features and 3D objects are described by their layer, geometry, type and
+  serialized. Screenshots require approval of a local preview for each capture. DOM text, form
+  values, media URLs and `data-klipp-private` subtrees are redacted. Canvas pixels may contain
+  private data and must be reviewed before approval. Denial, closing or Escape sends no image.
+  Approved screenshots may be attached only after a separate filing click; images committed to
+  `klipp-attachments` inherit repository visibility and remain in history. Map features and 3D objects are described by their layer, geometry, type and
   name; property values only when the app names them in `reveal`. Query values in addresses are
   blanked. The page context is escaped so it can't
   close its own tag, and the agent is told it is data, not instructions.
@@ -59,8 +63,8 @@ What it does to keep that safe:
 - **A click before anything is filed.** The card shows the whole ticket and the page details
   first. The server files only a ticket the agent proposed in that conversation, once, while it
   is waiting on the user. Tokens are scoped to their host: a github.com token goes only to
-  github.com, and nothing goes to a remote that isn't GitHub. With no token for github.com, the
-  server sends nothing to GitHub: it hands that same ticket back once, as a link to GitHub's
+  github.com, and nothing goes to a remote that isn't GitHub. With a configured box, its GitHub login is used after a local token; the token never reaches
+  apps or agents. With neither token nor box login for github.com: it hands that same ticket back once, as a link to GitHub's
   new-issue page, filled in, and the user submits it there, signed in as themselves.
 - **Bounded.** At most four agent runs at once (`chat.maxRuns`), 50 conversations, 1 MB request
   bodies, and every run stops when its page goes away or the dev server closes.
@@ -82,7 +86,11 @@ What it does to keep that safe:
   are refused. The public host is explicit, its Origin must be HTTPS, and changes still require
   the page's CSRF header. An identity never authorizes `/v1`: the bearer token remains required.
   Without these settings the UI remains localhost-only with no sign-in; keep its port private.
-  Agent and token changes log the initiating identity without secrets. Run logs and agent
+  GitHub uses a device login with isolated HOME/GH_CONFIG_DIR in the private data folder;
+  host credentials and keyrings are excluded. Issue receipts are consumed before network writes
+  and retained across restarts; ambiguous failures are not retried. Apps holding a box token can
+  file in any repository the GitHub login can access. Keep the token private.
+  Agent, GitHub and token changes log the initiating identity without secrets. Run logs and agent
   sign-in sessions are shared among authorized owners: this is an administration page.
 
 What it can't protect against:

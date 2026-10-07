@@ -7,6 +7,27 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-07
+
+### Added
+
+- `take_screenshot`: local DOM rasterisation with redacted text/forms/media/private subtrees,
+  per-capture preview and Approve / Don't send consent, 1600 px / 500 KB JPEG caps, readable 2D
+  canvas pixels and a canvas adapter snapshot hook for WebGL. Approved images reach Claude and
+  Codex as MCP image content, also through Smia; ticket cards let testers attach them.
+- GitHub as Smia's third sign-in, using the GitHub CLI's device login with isolated credentials
+  in the box volume, status, sign-out and audit lines. Token-guarded `POST /v1/issues` files
+  tickets, uploads selected images on `klipp-attachments`, and keeps durable once-only receipts.
+- Typed boolean `import.meta.env.KLIPP` whenever the Vite plugin is active, including `KLIPP=1`
+  production builds, for canvas adapter registration.
+
+### Changed
+
+- Filing uses a local GitHub token first, then a configured box's GitHub login, then the existing
+  prefilled GitHub link when signed out. A box login files in the chat without opening a tab.
+- Screenshot CSP, redaction, WebGL, public-image visibility, attachment retention, box `gh`
+  installation and protocol limits are documented.
+
 ## [0.9.0] - 2026-10-07
 
 ### Added
