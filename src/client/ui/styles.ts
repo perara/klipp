@@ -1,5 +1,8 @@
 export const CSS = /* css */ `
 :host { all: initial; }
+.screenshot-preview { display:block; width:100%; height:auto; border-radius:8px; margin:8px 0; }
+.screenshot-card .btn { min-height:44px; }
+.screenshot-attachment { display:flex; align-items:center; gap:8px; min-height:44px; }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 

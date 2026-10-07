@@ -1,3 +1,4 @@
+import { isScreenshot } from '../shared/screenshot.js';
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AGENTS, type AgentEvent } from '../server/agents.js';
@@ -6,6 +7,9 @@ import type { McpResult, McpTool } from '../server/mcp.js';
 import type { RunRequest, Runner } from '../server/runner.js';
 import type { AgentId, AgentsResponse } from '../shared/protocol.js';
 import type { Outcome, RunEntry, RunLog } from './runlog.js';
+import { BoxIssues, parseBoxIssue } from './issues.js';
+import type { Logins } from './logins.js';
+import type { BoxAudit } from './server.js';
 import type { Tokens } from './tokens.js';
 
 const AGENT_IDS = Object.keys(AGENTS) as AgentId[];
@@ -16,6 +20,10 @@ const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MAX_TOOLS = 16;
 
 export interface V1Deps {
+  logins?: Logins | undefined;
+  data?: string | undefined;
+  audit?: ((entry: BoxAudit) => void) | undefined;
+  githubFetch?: typeof fetch | undefined;
   runner: Runner;
   /** Why the agent can't run here, signing in included; undefined when it can. */
   problem(agent: AgentId): Promise<string | undefined>;
@@ -88,6 +96,10 @@ export function parseRunRequest(body: Record<string, unknown>): RunRequest | str
 
 /** Box protocol v1: `/v1/agents`, `/v1/runs`, `/v1/runs/:run/tools/:call`, with a Bearer token. */
 export function createV1(deps: V1Deps) {
+  const issues =
+    deps.logins && deps.data
+      ? new BoxIssues(deps.data, deps.logins, deps.audit, deps.githubFetch)
+      : undefined;
   const live = new Map<string, LiveRun>();
   const now = () => new Date().toISOString();
 
@@ -239,12 +251,18 @@ export function createV1(deps: V1Deps) {
     // between, so an answer that is dropped (a late or a second one) is never told 204.
     const body = await readJson(req);
     if (typeof body.content !== 'string') return json(res, 400, { error: 'content must be text.' });
+    if (body.image !== undefined && (!isScreenshot(body.image) || body.isError))
+      return json(res, 400, { error: 'Invalid screenshot.' });
     const entry = live.get(runId);
     if (!entry) return json(res, 404, { error: 'No such run.' });
     if (entry.app !== app) return json(res, 403, { error: 'Another app started this run.' });
     const finish = entry.pending.get(call);
     if (!finish) return json(res, 404, { error: 'No such tool call waiting.' });
-    finish({ text: body.content, isError: body.isError === true });
+    finish({
+      text: body.content,
+      isError: body.isError === true,
+      ...(body.image ? { image: body.image } : {}),
+    });
     res.statusCode = 204;
     res.end();
   }
@@ -254,6 +272,12 @@ export function createV1(deps: V1Deps) {
       const app = appOf(req);
       if (!app)
         return json(res, 401, { error: 'A valid token is needed: Authorization: Bearer <token>.' });
+      if (req.method === 'POST' && path === '/v1/issues' && issues) {
+        const issue = parseBoxIssue(await readJson(req, 2_100_000));
+        if (!issue) return json(res, 400, { error: 'Invalid issue or attachments.' });
+        const filed = await issues.fileIssue(app, issue);
+        return json(res, filed.status, filed.body);
+      }
       if (req.method === 'GET' && path === '/v1/agents') return agents(res);
       if (req.method === 'POST' && path === '/v1/runs') return run(req, res, app);
       const tool = /^\/v1\/runs\/([\w-]+)\/tools\/([\w-]+)$/.exec(path);

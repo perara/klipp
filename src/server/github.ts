@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import type { Screenshot } from '../shared/screenshot.js';
 import { execFileSync } from 'node:child_process';
 import type { IssueDraft } from '../shared/protocol.js';
 
@@ -91,8 +93,59 @@ export async function fileGitHubIssue(
   draft: IssueDraft,
   token: string,
   labels: string[] = [],
+  attachments: Screenshot[] = [],
+  fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const response = await fetch(issuesEndpoint(repo), {
+  let body = draft.body;
+  if (attachments.length) {
+    const endpoint = issuesEndpoint(repo).replace(/\/issues$/, '');
+    const request = async (path: string, method = 'GET', value?: object) => {
+      const r = await fetchImpl(`${endpoint}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'klipp',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        ...(value ? { body: JSON.stringify(value) } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      return { response: r, value: (await r.json()) as Record<string, unknown> };
+    };
+    const branch = 'klipp-attachments';
+    const ref = await request(`/git/ref/heads/${branch}`);
+    if (ref.response.status === 404) {
+      const repository = await request('');
+      if (!repository.response.ok || typeof repository.value.default_branch !== 'string')
+        throw new Error('Cannot find the attachment branch base.');
+      const base = await request(
+        `/git/ref/heads/${encodeURIComponent(repository.value.default_branch)}`,
+      );
+      const sha = (base.value.object as { sha?: string } | undefined)?.sha;
+      if (!base.response.ok || !sha) throw new Error('Cannot find the attachment branch base.');
+      const made = await request('/git/refs', 'POST', { ref: `refs/heads/${branch}`, sha });
+      if (!made.response.ok) {
+        // Another issue may have created it while these reads yielded.
+        const raced = await request(`/git/ref/heads/${branch}`);
+        if (!raced.response.ok) throw new Error('Cannot create the attachment branch.');
+      }
+    } else if (!ref.response.ok) throw new Error('Cannot read the attachment branch.');
+    for (const image of attachments) {
+      const path = `screenshots/${randomUUID()}.${image.mimeType === 'image/jpeg' ? 'jpg' : 'webp'}`;
+      const uploaded = await request(`/contents/${path}`, 'PUT', {
+        message: 'Add approved Klipp screenshot',
+        content: image.data,
+        branch,
+      });
+      const sha = (uploaded.value.commit as { sha?: string } | undefined)?.sha;
+      if (!uploaded.response.ok || !sha) throw new Error('Cannot upload the approved screenshot.');
+      const { url, path: repoPath } = parseRepo(repo);
+      body += `\n\n![Approved Klipp screenshot](${url.origin}/${repoPath}/blob/${sha}/${path}?raw=true)`;
+    }
+  }
+  const response = await fetchImpl(issuesEndpoint(repo), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -103,7 +156,7 @@ export async function fileGitHubIssue(
     },
     body: JSON.stringify({
       title: draft.title,
-      body: draft.body,
+      body,
       ...(labels.length ? { labels } : {}),
     }),
     signal: AbortSignal.timeout(30_000),

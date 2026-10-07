@@ -1,3 +1,4 @@
+import type { BoxIssue } from '../box/issues.js';
 import type { AgentId, AgentsResponse } from '../shared/protocol.js';
 import type { AgentEvent } from './agents.js';
 import type { McpResult } from './mcp.js';
@@ -148,7 +149,11 @@ export function boxRunner(box: BoxConnection, fetchImpl: typeof fetch = fetch): 
             const posted = await fetchImpl(`${base}/v1/runs/${runId}/tools/${call.id}`, {
               method: 'POST',
               headers: { ...auth, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content: result.text, isError: result.isError ?? false }),
+              body: JSON.stringify({
+                content: result.text,
+                isError: result.isError ?? false,
+                ...(result.image ? { image: result.image } : {}),
+              }),
               signal: stop.signal,
             });
             if (!posted.ok) throw new Error(`The AI box answered ${posted.status}.`);
@@ -189,4 +194,25 @@ export function boxRunner(box: BoxConnection, fetchImpl: typeof fetch = fetch): 
       }
     },
   };
+}
+
+/** No GitHub credential crosses this connection. Undefined means the box is signed out. */
+export async function boxFileIssue(
+  box: BoxConnection,
+  issue: BoxIssue,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | undefined> {
+  const response = await fetchImpl(`${box.url.replace(/\/+$/, '')}/v1/issues`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${box.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(issue),
+    signal: AbortSignal.timeout(120_000),
+  });
+  const result = (await response.json()) as { url?: string; code?: string };
+  if (response.status === 409 && result.code === 'github_signed_out') return;
+  if (!response.ok || typeof result.url !== 'string' || !/^https:\/\//.test(result.url))
+    throw new Error(
+      `Smia could not file this ticket (${response.status}). Check the repository before trying again.`,
+    );
+  return result.url;
 }

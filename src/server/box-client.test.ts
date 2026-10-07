@@ -291,3 +291,34 @@ describe('Klipp with a box', () => {
     middleware.close();
   });
 });
+
+it.each(['claude', 'codex'] as const)(
+  'relays approved screenshots as MCP images to %s in the box',
+  async (agent) => {
+    const events: AgentEvent[] = [];
+    const image = { mimeType: 'image/jpeg' as const, data: '/9j/2Q==', width: 1, height: 1 };
+    await boxRunner({ url: box.url, token: TOKEN }).run(
+      {
+        agent,
+        system: 'S',
+        message: ask('screenshot'),
+        tools: [
+          {
+            name: 'take_screenshot',
+            description: 'Screenshot after consent.',
+            inputSchema: { type: 'object' },
+          },
+        ],
+      },
+      {
+        signal: new AbortController().signal,
+        onEvent: (e) => events.push(e),
+        onTool: (name) => {
+          expect(name).toBe('take_screenshot');
+          return Promise.resolve({ text: 'Approved.', image });
+        },
+      },
+    );
+    expect(textOf(events)).toContain('Image received: image/jpeg');
+  },
+);

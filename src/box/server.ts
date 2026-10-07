@@ -48,6 +48,8 @@ export interface BoxOptions {
   model?: string | undefined;
   /** Replace GitHub's command and leading arguments in tests. */
   githubCommand?: string[] | undefined;
+  /** Replaces GitHub HTTP requests in tests. */
+  githubFetch?: typeof fetch | undefined;
   /** Replace an agent's command and leading arguments, as the tests do. */
   commands?: Partial<Record<AgentId, string[]>> | undefined;
   /** How often an idle stream gets an empty line. Default: 15 s. */
@@ -74,7 +76,8 @@ export interface BoxAudit {
     | 'agent.login.cancel'
     | 'agent.logout'
     | 'token.create'
-    | 'token.revoke';
+    | 'token.revoke'
+    | 'issue.filed';
   target: string;
 }
 
@@ -138,6 +141,10 @@ export async function startBox(options: BoxOptions): Promise<BoxServer> {
     ((entry: BoxAudit) =>
       console.log(JSON.stringify({ time: new Date().toISOString(), ...entry })));
   const v1 = createV1({
+    logins,
+    data: options.data,
+    githubFetch: options.githubFetch,
+    audit,
     runner,
     problem,
     tokens,

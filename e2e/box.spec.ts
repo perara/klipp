@@ -412,3 +412,36 @@ test.describe.serial('the AI box', () => {
     expect(boxErrors).toEqual([]);
   });
 });
+
+test('GitHub signs in by device code, files through protocol v1 without exposing credentials, and signs out', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await page.goto('/');
+  const github = await signedOut(page, 'github');
+  await github.getByRole('button', { name: 'Sign in' }).click();
+  await expect(github.locator('code')).toHaveText('GHAB-CDEF');
+  await expect(
+    github.getByRole('link', { name: 'https://github.com/login/device', exact: true }),
+  ).toBeVisible();
+  await expect(github).toContainText('Signed in');
+  const issue = {
+    id: 'github-e2e-ticket',
+    repo: 'https://github.com/example/app',
+    title: 'Screenshot ticket',
+    body: 'Approved by tester',
+    labels: ['bug'],
+    attachments: [{ mimeType: 'image/jpeg', data: '/9j/2Q==', width: 1, height: 1 }],
+  };
+  const auth = { Authorization: 'Bearer e2e-box-token-0123456789' };
+  expect((await request.post(`${baseURL}v1/issues`, { data: issue })).status()).toBe(401);
+  const filed = await request.post(`${baseURL}v1/issues`, { headers: auth, data: issue });
+  expect(await filed.json()).toEqual({ url: 'https://github.com/example/app/issues/42' });
+  expect(
+    await (await request.post(`${baseURL}v1/issues`, { headers: auth, data: issue })).json(),
+  ).toEqual(await filed.json());
+  expect(await page.locator('body').textContent()).not.toContain('gho_fake_secret');
+  await github.getByRole('button', { name: 'Sign out' }).click();
+  await expect(github).toContainText('Not signed in');
+});

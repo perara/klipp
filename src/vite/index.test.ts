@@ -49,15 +49,15 @@ it.each([
   delete process.env.VITEST;
   try {
     const config = await resolveConfig({ configFile: false, plugins: [klipp()] }, command);
-    expect(config.define['import.meta.env.KLIPP']).toBe(JSON.stringify(active));
+    expect(config.define?.['import.meta.env.KLIPP']).toBe(JSON.stringify(active));
     process.env.KLIPP = '1';
     const build = await resolveConfig({ configFile: false, plugins: [klipp()] }, 'build');
-    expect(build.define['import.meta.env.KLIPP']).toBe('true');
+    expect(build.define?.['import.meta.env.KLIPP']).toBe('true');
     const disabled = await resolveConfig(
       { configFile: false, plugins: [klipp({ enabled: false })] },
       command,
     );
-    expect(disabled.define['import.meta.env.KLIPP']).toBe('false');
+    expect(disabled.define?.['import.meta.env.KLIPP']).toBe('false');
   } finally {
     if (before === undefined) delete process.env.KLIPP;
     else process.env.KLIPP = before;

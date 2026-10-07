@@ -16,3 +16,16 @@ test('tap the paperclip, point with a tap, close with a tap', async ({ page }) =
   await page.getByRole('button', { name: 'Count' }).tap();
   await expect(page.getByTestId('clicks')).toHaveText('Clicks: 1');
 });
+
+test('screenshot consent has touch controls and closing it denies sending', async ({ page }) => {
+  await page.goto('./');
+  await figure(page).tap();
+  const message = chat(page).getByRole('textbox', { name: 'Message Klipp' });
+  await message.fill('screenshot');
+  await message.press('Enter');
+  const deny = chat(page).getByRole('button', { name: "Don't send" });
+  await expect(deny).toBeVisible();
+  expect((await deny.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await deny.tap();
+  await expect(chat(page).locator('.msg.klipp').last()).toContainText('No image was sent');
+});

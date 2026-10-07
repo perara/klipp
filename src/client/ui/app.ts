@@ -1,3 +1,6 @@
+import { MAX_SCREENSHOTS } from '../../shared/screenshot.js';
+import { captureScreenshot, type Capture, type Region } from '../screenshot.js';
+import type { ScreenshotCard } from './screenshot.js';
 import type { CanvasTarget } from '../../canvas/registry.js';
 import { HOST_ATTR, parseId } from '../../shared/id.js';
 import type { KlippManifest } from '../../shared/manifest.js';
@@ -162,6 +165,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
   /** Whether the next message carries the subject. */
   let attached = false;
   let pendingCard: TicketCard | undefined;
+  let pendingScreenshot: ScreenshotCard | undefined;
+  let capturing = false;
+  const approved = new Map<string, Capture>();
   /** What the user typed instead of answering the pending card. */
   let typedInstead = '';
   /** The agent asked the user to point, and is waiting. */
@@ -333,6 +339,35 @@ export function createApp(config: RuntimeConfig): KlippApp {
   async function runTool(call: ClientToolCall, conversation: string): Promise<ClientToolResult> {
     const { id, input } = call;
     const text = (value: unknown) => (typeof value === 'string' ? value : '');
+    if (call.name === 'take_screenshot') {
+      if (capturing || pendingScreenshot)
+        return { id, content: 'Another screenshot is waiting.', isError: true };
+      const element = input.id === undefined ? undefined : resolve(text(input.id)).element;
+      if (input.id !== undefined && !element)
+        return { id, content: 'That element is not on the page.', isError: true };
+      capturing = true;
+      try {
+        const capture = await captureScreenshot(element, input.region as Region | undefined);
+        if (!capturing || mode === 'closed')
+          return { id, content: 'The screenshot was cancelled.' };
+        const card = (pendingScreenshot = chat.screenshot(capture));
+        const consent = await card.decision;
+        if (pendingScreenshot === card) pendingScreenshot = undefined;
+        if (!consent)
+          return { id, content: 'The user declined the screenshot. No image was sent.' };
+        if (approved.size >= MAX_SCREENSHOTS) approved.delete(approved.keys().next().value!);
+        approved.set(id, capture);
+        return { id, content: `Approved redacted screenshot ${id}.`, image: capture.image };
+      } catch (error) {
+        return {
+          id,
+          content: error instanceof Error ? error.message : String(error),
+          isError: true,
+        };
+      } finally {
+        capturing = false;
+      }
+    }
     if (call.name === 'point_at_element') {
       const prompt = text(input.prompt);
       chat.reply(prompt);
@@ -365,6 +400,34 @@ export function createApp(config: RuntimeConfig): KlippApp {
     const ticket = input as unknown as Ticket;
     const details = footer();
     const card = (pendingCard = chat.ticket(ticket, details));
+    const attachments: Array<{ id: string; check: HTMLInputElement }> = [];
+    if (approved.size)
+      card.element.append(
+        h(
+          'p',
+          {},
+          'Attached screenshots are stored in the repository and share its visibility, including public access. They can remain after the ticket is deleted.',
+        ),
+      );
+    for (const [imageId, capture] of approved) {
+      const check = h('input', {
+        type: 'checkbox',
+        checked: true,
+        'aria-label': 'Attach approved screenshot',
+      });
+      const preview = h('canvas', {
+        class: 'screenshot-preview',
+        'aria-label': 'Approved screenshot attachment',
+      });
+      preview.width = capture.preview.width;
+      preview.height = capture.preview.height;
+      preview.getContext('2d')!.drawImage(capture.preview, 0, 0);
+      card.element.append(
+        h('label', { class: 'screenshot-attachment' }, check, 'Attach approved screenshot'),
+        preview,
+      );
+      attachments.push({ id: imageId, check });
+    }
     figure.mood = 'idle';
     const decision = await card.decision;
     pendingCard = undefined;
@@ -382,6 +445,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
         conversation,
         proposal: id,
         footer: details,
+        attachments: attachments.filter((a) => a.check.checked).map((a) => a.id),
       });
       if ('submit' in filed) {
         // The server has no GitHub token: the user submits it there, signed in as themselves.
@@ -406,6 +470,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
 
   /** What the agent was waiting on when its turn ended can't reach it any more. */
   function retireToolCalls() {
+    capturing = false;
+    pendingScreenshot?.deny();
+    pendingScreenshot = undefined;
     pendingCard?.expire();
     pendingCard = undefined;
     if (pickingForAgent) cancelPicking?.();
@@ -420,8 +487,10 @@ export function createApp(config: RuntimeConfig): KlippApp {
       await agentsLoaded;
       const request = { ...(conversation ? { conversation } : {}), agent, text, page };
       for await (const event of talk(config.endpoint, request)) {
-        if (event.type === 'conversation') conversation = event.id;
-        else if (event.type === 'text') {
+        if (event.type === 'conversation') {
+          if (conversation !== event.id) approved.clear();
+          conversation = event.id;
+        } else if (event.type === 'text') {
           figure.mood = 'talking';
           (reply ??= chat.reply()).append(event.delta);
         } else if (event.type === 'break') reply = undefined;
@@ -537,6 +606,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
     if (busy || id === agent) return;
     agent = id;
     conversation = undefined;
+    approved.clear();
     try {
       localStorage.setItem(AGENT_KEY, id);
     } catch {
@@ -560,6 +630,8 @@ export function createApp(config: RuntimeConfig): KlippApp {
   }
 
   function close() {
+    capturing = false;
+    pendingScreenshot?.deny();
     cancelPicking?.();
     chat.hide();
     overlay.hide();

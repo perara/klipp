@@ -32,6 +32,8 @@ export interface CanvasTarget {
 
 /** Tells Klipp what a canvas draws. */
 export interface CanvasAdapter {
+  /** A PNG/JPEG/WebP data URL, read immediately after rendering for WebGL. Local until approval. */
+  screenshot?(canvas: HTMLCanvasElement): string | undefined | Promise<string | undefined>;
   /** What is drawn at a viewport point on `canvas`, the topmost thing; undefined for nothing. */
   at(point: Point, canvas: Element): CanvasTarget | undefined;
   /** Finds what `key` names, if it is drawn now, for following a link. */
@@ -74,6 +76,13 @@ function stacked(adapters: CanvasAdapter[]): CanvasAdapter {
       for (const adapter of adapters) {
         const target = adapter.at(point, canvas);
         if (target) return target;
+      }
+      return undefined;
+    },
+    async screenshot(canvas) {
+      for (const adapter of adapters) {
+        const image = await adapter.screenshot?.(canvas);
+        if (image) return image;
       }
       return undefined;
     },
