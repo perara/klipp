@@ -74,6 +74,17 @@ What it does to keep that safe:
   reporter, and the logs carry no message text. `klipp serve` won't listen beyond localhost
   without an identity header.
 
+- **Smia on the web** (`klipp box` / `klipp smia` with `KLIPP_BOX_IDENTITY_HEADER`): only
+  the reverse proxy may reach its port. The proxy must validate the session and overwrite both
+  identity and roles headers, including on assets and streams. Smia refuses to start without
+  `KLIPP_BOX_ROLES_HEADER` and `KLIPP_BOX_REQUIRED_ROLE`; every UI request needs a single
+  validated e-mail and that exact role. Ambiguous/duplicate headers and malformed role lists
+  are refused. The public host is explicit, its Origin must be HTTPS, and changes still require
+  the page's CSRF header. An identity never authorizes `/v1`: the bearer token remains required.
+  Without these settings the UI remains localhost-only with no sign-in; keep its port private.
+  Agent and token changes log the initiating identity without secrets. Run logs and agent
+  sign-in sessions are shared among authorized owners: this is an administration page.
+
 What it can't protect against:
 
 - anyone who can already run code on your machine, as you;

@@ -195,7 +195,7 @@ describe('box protocol v1', () => {
     const body = (await (await fetch(`${out.url}/v1/agents`, { headers: auth() })).json()) as {
       agents: Array<{ id: string; problem?: string }>;
     };
-    expect(body.agents[0]!.problem).toBe("Claude isn't signed in. Open the AI box to sign in.");
+    expect(body.agents[0]!.problem).toBe("Claude isn't signed in. Open Smia to sign in.");
   });
 
   it('keeps API keys from the agents: signing in is with the subscription', async () => {
@@ -565,7 +565,7 @@ describe('box protocol v1', () => {
       const events = await all(await startRun(main, { agent, message: ask('break') }));
       expect(events.at(-1)).toEqual({
         type: 'error',
-        message: 'Failed to authenticate: OAuth session expired Open the AI box to sign in again.',
+        message: 'Failed to authenticate: OAuth session expired Open Smia to sign in again.',
       });
     }
   });
