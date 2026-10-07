@@ -177,3 +177,39 @@ describe('Logins', () => {
     await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
   });
 });
+
+it('signs GitHub in by device code in the box, keeps the token there, and signs out', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'klipp-github-login-'));
+  const config = join(data, 'github');
+  mkdirSync(config);
+  const box = (open = new Logins({
+    commandOf: () => fakeAgent,
+    githubCommand: [
+      process.execPath,
+      fileURLToPath(new URL('../../test/fake-gh.mjs', import.meta.url)),
+    ],
+    env: {
+      ...process.env,
+      GH_TOKEN: 'host-secret',
+      GITHUB_TOKEN: 'host-secret',
+      GH_CONFIG_DIR: config,
+      KLIPP_GITHUB_HOME: data,
+    },
+  }));
+  expect(await box.signedIn('github')).toBe(false);
+  expect(await box.githubToken()).toBeUndefined();
+  const login = box.start('github');
+  expect(await until(login, 'waiting')).toEqual({
+    state: 'waiting',
+    url: 'https://github.com/login/device',
+    code: 'GHAB-CDEF',
+    needsCode: false,
+  });
+  expect(login.sendCode('GHAB-CDEF')).toBe(false);
+  await until(login, 'done');
+  expect(await box.signedIn('github')).toBe(true);
+  expect(await box.githubToken()).toBe('gho_fake_secret');
+  expect(readFileSync(join(config, 'fake-login'), 'utf8')).toBe('gho_fake_secret');
+  await box.logout('github');
+  expect(await box.githubToken()).toBeUndefined();
+});

@@ -1,12 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { AGENTS } from '../server/agents.js';
 import { fromKlipp } from '../server/guard.js';
 import { json, readJson } from '../server/http.js';
 import type { Runner } from '../server/runner.js';
-import type { AgentId } from '../shared/protocol.js';
 import type { BoxIdentity } from './identity.js';
 import type { BoxAudit } from './server.js';
-import type { AgentStatus, Logins } from './logins.js';
+import { LOGIN_LABELS, type LoginId, type AgentStatus, type Logins } from './logins.js';
 import type { RunLog } from './runlog.js';
 import type { Tokens } from './tokens.js';
 
@@ -21,8 +19,8 @@ export interface UiDeps {
   keepAliveMs?: number | undefined;
 }
 
-const isAgent = (value: string | undefined): value is AgentId =>
-  value !== undefined && Object.hasOwn(AGENTS, value);
+const isAgent = (value: string | undefined): value is LoginId =>
+  value !== undefined && Object.hasOwn(LOGIN_LABELS, value);
 
 function sse(res: ServerResponse, keepAliveMs: number) {
   res.statusCode = 200;
@@ -58,15 +56,15 @@ export function createUiApi(deps: UiDeps) {
   const keepAliveMs = deps.keepAliveMs ?? 15_000;
   const agents = (): Promise<AgentStatus[]> =>
     Promise.all(
-      (Object.keys(AGENTS) as AgentId[]).map(async (id) => {
+      (Object.keys(LOGIN_LABELS) as LoginId[]).map(async (id) => {
         const [problem, signedIn, version] = await Promise.all([
-          deps.runner.problem(id),
+          id === 'github' ? Promise.resolve(undefined) : deps.runner.problem(id),
           deps.logins.signedIn(id),
           deps.logins.version(id),
         ]);
         return {
           id,
-          label: AGENTS[id].label,
+          label: LOGIN_LABELS[id],
           signedIn,
           ...(version ? { version } : {}),
           ...(problem ? { problem } : {}),
@@ -83,7 +81,7 @@ export function createUiApi(deps: UiDeps) {
   ): Promise<boolean> {
     const method = req.method ?? 'GET';
     const audit = (action: BoxAudit['action'], target: string) => {
-      if (user) deps.audit?.({ user, action, target });
+      deps.audit?.({ user: user ?? 'local-owner', action, target });
     };
     // Another site's page can fire requests at localhost, even blind GETs that start CLIs or hold a
     // stream open: the browser says where a request comes from, and only the page itself passes.
@@ -109,7 +107,7 @@ export function createUiApi(deps: UiDeps) {
       if (method === 'GET' && !id) return (json(res, 200, await agents()), true);
       if (method === 'POST' && isAgent(id) && action === 'login') {
         const login = deps.logins.start(id);
-        if (user && !auditedLogins.has(login)) {
+        if (!auditedLogins.has(login)) {
           auditedLogins.add(login);
           audit('agent.login.start', id);
           const stop = login.subscribe((state) => {

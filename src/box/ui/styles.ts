@@ -36,7 +36,7 @@ main { min-height: 300px; }
 h2 { font-size: 22px; letter-spacing: -.4px; margin: 0; }
 h3 { font-size: 22px; margin: 0 auto 0 0; }
 .section-heading p { margin: 4px 0 0; }
-.agent-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px; margin-bottom: 20px; }
 .agent-card { border-top: 3px solid var(--accent); }
 .agent-description { margin: 16px 0 4px; }

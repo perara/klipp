@@ -24,6 +24,10 @@ beforeAll(async () => {
     port: 0,
     tokens: `klipp=${TOKEN}`,
     commands: { claude: fakeAgent, codex: fakeAgent },
+    githubCommand: [
+      process.execPath,
+      fileURLToPath(new URL('../../test/fake-gh.mjs', import.meta.url)),
+    ],
     keepAliveMs: 50,
   });
 });
@@ -124,6 +128,7 @@ describe('the box UI API', () => {
     expect(agents.map((a) => [a.id, a.signedIn, a.version])).toEqual([
       ['claude', false, '9.9.9 (fake)'],
       ['codex', true, '9.9.9 (fake)'],
+      ['github', false, 'gh version 9.9.9 (fake)'],
     ]);
   });
 
