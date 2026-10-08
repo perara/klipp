@@ -7,6 +7,8 @@ behaviour or options.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-09
+
 ### Added
 
 - `window.klipp.reset()` synchronously clears private client state at host session boundaries,
@@ -282,7 +284,9 @@ behaviour or options.
 - Source-derived element IDs stamped at build time, element picking through a glass that keeps
   the page from reacting, `?klipp=` deep links, and redacted reports.
 
-[Unreleased]: https://github.com/perara/klipp/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/perara/klipp/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/perara/klipp/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/perara/klipp/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/perara/klipp/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/perara/klipp/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/perara/klipp/compare/v0.7.0...v0.8.0
