@@ -168,6 +168,29 @@ the DevTools console, `klipp.id($0)` gives an element's ID and `klipp.find(id)` 
 
 Web components work too: Klipp points into open shadow roots, and an ID steps into one with `s`.
 
+### Host session changes
+
+Klipp keeps its chat locally while the page stays open. Before signing out, expiring a
+session, or switching users or organisations in the same document, clear it synchronously:
+
+```ts
+import type {} from 'klipp/client';
+
+window.klipp?.reset();
+// Now clear or replace the host app's session.
+```
+
+`reset()` clears the transcript, draft, selected element, conversation, approved screenshots,
+queued messages, saved agent choice and captured diagnostics. It denies pending consent,
+expires ticket decisions, aborts chat, discovery, tool-answer, pairing and filing requests,
+and removes the old UI and its listeners. Late results from that session are ignored. The
+hotkey and launcher remain installed; the next use creates a fresh UI. Reset also works
+before the lazy UI has loaded. Any previously returned `KlippApp` is retired; obtain a new
+one with `window.klipp.app()`. Closing the chat alone keeps its state.
+
+This clears client state; it cannot undo a ticket already filed or erase server-side history.
+Host apps must continue enforcing authenticated conversation ownership on the server.
+
 ### Maps, 3D and other canvases
 
 A canvas has no elements inside it, so on its own, pointing at a map or a 3D scene stops at the

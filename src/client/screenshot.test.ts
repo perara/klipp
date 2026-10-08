@@ -77,3 +77,35 @@ it('downscales again when the first JPEG exceeds the byte cap', () => {
     encode.mockRestore();
   }
 });
+
+it('cancels capture before its frame can read pixels from the next session', async () => {
+  const canvas = document.createElement('canvas');
+  document.body.append(canvas);
+  const pixels = vi.spyOn(canvas, 'toDataURL');
+  const abort = new AbortController();
+  const capturing = screenshotSvg(region, abort.signal);
+  abort.abort();
+  await expect(capturing).rejects.toMatchObject({ name: 'AbortError' });
+  expect(pixels).not.toHaveBeenCalled();
+  pixels.mockRestore();
+});
+
+it('stops cloning while waiting for an old session canvas adapter', async () => {
+  const canvas = document.createElement('canvas');
+  document.body.append(canvas);
+  let finish!: (value: string) => void;
+  const stop = registerCanvas(canvas, {
+    at: () => undefined,
+    screenshot: () =>
+      new Promise((done) => {
+        finish = done;
+      }),
+  });
+  const abort = new AbortController();
+  const capturing = screenshotSvg(region, abort.signal);
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  abort.abort();
+  await expect(capturing).rejects.toMatchObject({ name: 'AbortError' });
+  finish('data:image/png;base64,YWJj');
+  stop();
+});

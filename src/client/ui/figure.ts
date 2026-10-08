@@ -30,6 +30,12 @@ function eye(x: number, y: number) {
 /** Klipp himself: a paperclip with eyes, eyebrows and moods. */
 export class Figure {
   readonly button: HTMLButtonElement;
+  destroy() {
+    window.removeEventListener('pointermove', this.track, true);
+    cancelAnimationFrame(this.frame);
+    clearTimeout(this.hello);
+  }
+
   private readonly root: SVGSVGElement;
   private readonly pupils: SVGGElement[];
   private current: Mood = 'idle';

@@ -1,3 +1,4 @@
+import { abortable } from '../shared/abort.js';
 import { canvasAdapterFor, type CanvasTarget, type Point } from '../canvas/registry.js';
 
 let warned = false;
@@ -31,16 +32,28 @@ export async function findTarget(
   element: Element,
   key: string,
   timeout = 10_000,
+  signal?: AbortSignal,
 ): Promise<CanvasTarget | undefined> {
+  signal?.throwIfAborted();
   const found = canvasAdapterFor(element);
   if (!found?.adapter.find) return undefined;
   const { adapter, canvas } = found;
   const deadline = Date.now() + timeout;
   for (;;) {
     const asked = quietly(() => adapter.find?.(key, canvas));
-    const target = await Promise.resolve(asked).catch(() => undefined);
+    const finding = Promise.resolve(asked).catch(() => undefined);
+    const target = await (signal ? abortable(finding, signal) : finding);
+    signal?.throwIfAborted();
     if (target || Date.now() >= deadline) return target;
-    await new Promise((done) => setTimeout(done, 250));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pause = new Promise<void>((done) => {
+      timer = setTimeout(done, 250);
+    });
+    try {
+      await (signal ? abortable(pause, signal) : pause);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

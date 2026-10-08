@@ -7,6 +7,19 @@ behaviour or options.
 
 ## [Unreleased]
 
+### Added
+
+- `window.klipp.reset()` synchronously clears private client state at host session boundaries,
+  cancels pending work and consent, and recreates the UI on next use. `KlippApp.destroy()`
+  retires an individual UI instance.
+
+### Fixed
+
+- Smia discovery has a five-second deadline covering headers and body; disconnected chats
+  release run slots without canceling another consumer of shared discovery.
+- Agent availability refreshes on open and after errors or unavailable results. The production
+  launcher retries with bounded backoff and on focus or reconnect, without reloading the page.
+
 ## [0.10.0] - 2026-10-07
 
 ### Added

@@ -27,6 +27,8 @@ import { pageElementsAt, startPicker, type Point } from './picker.js';
 import { CSS } from './styles.js';
 
 export interface KlippApp {
+  /** Cancels pending work and removes all session UI and listeners. This instance cannot be reused. */
+  destroy(): void;
   toggle(): void;
   open(): void;
   close(): void;
@@ -53,7 +55,11 @@ const GREETING =
 const UNREACHABLE =
   "I can't reach my brain from here. The chat runs in the dev server (or `vite preview`).";
 
-function waitFor<T>(find: () => T | undefined, timeout: number): Promise<T | undefined> {
+function waitFor<T>(
+  find: () => T | undefined,
+  timeout: number,
+  signal: AbortSignal,
+): Promise<T | undefined> {
   const found = find();
   if (found) return Promise.resolve(found);
   return new Promise((done) => {
@@ -67,12 +73,16 @@ function waitFor<T>(find: () => T | undefined, timeout: number): Promise<T | und
     });
     const timer = setTimeout(() => finish(find()), timeout);
     function finish(value: T | undefined) {
+      signal.removeEventListener('abort', abort);
       observer.disconnect();
       clearTimeout(timer);
       cancelAnimationFrame(frame);
       done(value);
     }
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const abort = () => finish(undefined);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    else observer.observe(document.documentElement, { childList: true, subtree: true });
   });
 }
 
@@ -155,6 +165,10 @@ function mount(config: RuntimeConfig, chat: ChatView, figure: Figure) {
 }
 
 export function createApp(config: RuntimeConfig): KlippApp {
+  const lifetime = new AbortController();
+  const signal = lifetime.signal;
+  let retryAgents = true;
+  let chosen = false;
   let mode: Mode = 'closed';
   let manifest: KlippManifest | undefined;
   let conversation: string | undefined;
@@ -198,7 +212,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
   };
 
   const refresh = async () => {
-    manifest = await loadManifest(config);
+    const loaded = await loadManifest(config, signal);
+    signal.throwIfAborted();
+    manifest = loaded;
   };
 
   function entryOf(element: Element) {
@@ -250,6 +266,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
   }
 
   function pick(prompt = 'Click what you mean.'): Promise<Picked | undefined> {
+    if (signal.aborted) return Promise.resolve(undefined);
     cancelPicking?.();
     let hovered: { element: Element; point?: Point } | undefined;
     let frame = 0;
@@ -264,7 +281,9 @@ export function createApp(config: RuntimeConfig): KlippApp {
       });
     };
     // Labels need the manifest: relabel the hover once it arrives, and resolve only after it.
-    const loaded = refresh().then(showHover);
+    const loaded = refresh()
+      .then(showHover)
+      .catch(() => undefined);
     return new Promise((resolve) => {
       mode = 'picking';
       chat.hide();
@@ -290,7 +309,8 @@ export function createApp(config: RuntimeConfig): KlippApp {
             );
           } else overlay.hide();
         }
-        void loaded.then(() => resolve(picked));
+        if (signal.aborted || !picked) resolve(undefined);
+        else void loaded.then(() => resolve(signal.aborted ? undefined : picked));
       };
       cancelPicking = () => {
         stopPicker?.();
@@ -313,7 +333,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
 
   async function pickSubject() {
     const picked = await pick();
-    if (picked) focusOn(picked, true);
+    if (picked && !signal.aborted) focusOn(picked, true);
   }
 
   function footer(): string {
@@ -337,6 +357,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
 
   /** Answers a tool call that needs the page or the user, while the agent waits for it. */
   async function runTool(call: ClientToolCall, conversation: string): Promise<ClientToolResult> {
+    signal.throwIfAborted();
     const { id, input } = call;
     const text = (value: unknown) => (typeof value === 'string' ? value : '');
     if (call.name === 'take_screenshot') {
@@ -347,11 +368,16 @@ export function createApp(config: RuntimeConfig): KlippApp {
         return { id, content: 'That element is not on the page.', isError: true };
       capturing = true;
       try {
-        const capture = await captureScreenshot(element, input.region as Region | undefined);
-        if (!capturing || mode === 'closed')
+        const capture = await captureScreenshot(
+          element,
+          input.region as Region | undefined,
+          signal,
+        );
+        if (signal.aborted || !capturing || mode === 'closed')
           return { id, content: 'The screenshot was cancelled.' };
         const card = (pendingScreenshot = chat.screenshot(capture));
         const consent = await card.decision;
+        signal.throwIfAborted();
         if (pendingScreenshot === card) pendingScreenshot = undefined;
         if (!consent)
           return { id, content: 'The user declined the screenshot. No image was sent.' };
@@ -373,6 +399,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
       chat.reply(prompt);
       pickingForAgent = true;
       const picked = await pick(prompt).finally(() => (pickingForAgent = false));
+      signal.throwIfAborted();
       if (!picked) return { id, content: 'The user cancelled instead of pointing.' };
       focusOn(picked, false);
       return { id, content: JSON.stringify(await contextOf(picked)) };
@@ -384,7 +411,8 @@ export function createApp(config: RuntimeConfig): KlippApp {
         return { id, content: `No element with the ID ${wanted} is on the page.`, isError: true };
       }
       const key = parseId(wanted)?.target;
-      const target = key === undefined ? undefined : await findTarget(element, key, 2_000);
+      const target = key === undefined ? undefined : await findTarget(element, key, 2_000, signal);
+      signal.throwIfAborted();
       if (key !== undefined && !target) {
         return {
           id,
@@ -430,6 +458,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
     figure.mood = 'idle';
     const decision = await card.decision;
+    signal.throwIfAborted();
     pendingCard = undefined;
     if (decision === 'superseded') {
       return { id, content: `The user didn't file it, and wrote instead: ${typedInstead}` };
@@ -441,12 +470,17 @@ export function createApp(config: RuntimeConfig): KlippApp {
     }
     card.filing();
     try {
-      const filed = await fileIssue(config.endpoint, {
-        conversation,
-        proposal: id,
-        footer: details,
-        attachments: attachments.filter((a) => a.check.checked).map((a) => a.id),
-      });
+      const filed = await fileIssue(
+        config.endpoint,
+        {
+          conversation,
+          proposal: id,
+          footer: details,
+          attachments: attachments.filter((a) => a.check.checked).map((a) => a.id),
+        },
+        signal,
+      );
+      signal.throwIfAborted();
       if ('submit' in filed) {
         // The server has no GitHub token: the user submits it there, signed in as themselves.
         if (!/^https:\/\//.test(filed.submit))
@@ -484,9 +518,11 @@ export function createApp(config: RuntimeConfig): KlippApp {
     let reply: Reply | undefined;
     let failed = false;
     try {
-      await agentsLoaded;
+      await loadAgents(retryAgents);
+      signal.throwIfAborted();
       const request = { ...(conversation ? { conversation } : {}), agent, text, page };
-      for await (const event of talk(config.endpoint, request)) {
+      for await (const event of talk(config.endpoint, request, signal)) {
+        signal.throwIfAborted();
         if (event.type === 'conversation') {
           if (conversation !== event.id) approved.clear();
           conversation = event.id;
@@ -509,17 +545,21 @@ export function createApp(config: RuntimeConfig): KlippApp {
               isError: true,
             }))
             .then((result) => {
+              if (signal.aborted) return;
               figure.mood = 'thinking';
-              return answerTool(config.endpoint, { conversation: answering, ...result });
+              return answerTool(config.endpoint, { conversation: answering, ...result }, signal);
             });
         } else if (event.type === 'error') {
           failed = true;
+          retryAgents = true;
           reply = undefined;
           chat.reply(event.message);
         }
       }
     } catch (error) {
+      if (signal.aborted) return;
       failed = true;
+      retryAgents = true;
       chat.reply(
         error instanceof Unreachable
           ? UNREACHABLE
@@ -530,6 +570,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
     } finally {
       retireToolCalls();
     }
+    if (signal.aborted) return;
     figure.mood = failed ? 'sad' : 'idle';
   }
 
@@ -537,6 +578,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
   const queued: string[] = [];
 
   function send(text: string): boolean {
+    if (signal.aborted) return false;
     if (pendingCard) {
       // The agent is waiting on the draft; what the user typed becomes the answer.
       chat.user(text);
@@ -559,31 +601,52 @@ export function createApp(config: RuntimeConfig): KlippApp {
     void (async () => {
       try {
         const element = carried ? await contextOf(carried) : undefined;
+        signal.throwIfAborted();
         await exchange(text, pageContext(config.keepQuery, element));
       } catch (error) {
+        if (signal.aborted) return;
         chat.reply(error instanceof Error ? error.message : String(error));
         figure.mood = 'sad';
       } finally {
         busy = false;
-        if (queued.length) run(queued.splice(0).join('\n\n'));
+        if (!signal.aborted && queued.length) run(queued.splice(0).join('\n\n'));
       }
     })();
   }
 
   const AGENT_KEY = 'klipp:agent';
 
-  function loadAgents(): Promise<void> {
-    agentsLoaded ??= listAgents(config.endpoint)
+  function loadAgents(refresh = false): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    if (agentsLoaded) return agentsLoaded;
+    if (!refresh && !retryAgents) return Promise.resolve();
+    agentsLoaded = listAgents(
+      config.endpoint,
+      AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+    )
       .then((answer) => {
+        if (signal.aborted) return;
         agents = answer.agents;
         let saved: string | null = null;
         try {
           saved = localStorage.getItem(AGENT_KEY);
         } catch {
-          // Storage can be blocked; the server's preference stands.
+          /* Storage may be blocked. */
         }
         const usable = agents.filter((a) => a.available);
-        agent = usable.find((a) => a.id === saved)?.id ?? answer.preferred;
+        const next =
+          (chosen && usable.find((a) => a.id === agent)?.id) ||
+          usable.find((a) => a.id === saved)?.id ||
+          usable.find((a) => a.id === answer.preferred)?.id ||
+          usable[0]?.id ||
+          answer.preferred;
+        if (next !== agent) {
+          conversation = undefined;
+          approved.clear();
+        }
+        agent = next;
+        chosen = usable.length > 0;
+        retryAgents = !usable.length;
         chat.showAgents(agents, agent);
         if (!usable.length) {
           chat.reply(
@@ -594,16 +657,21 @@ export function createApp(config: RuntimeConfig): KlippApp {
         }
       })
       .catch((error: unknown) => {
-        // No chat server is fine (a static deploy still points and links); a refusal says why.
+        if (signal.aborted) return;
+        retryAgents = true;
         if (error instanceof Unreachable || !(error instanceof Error)) return;
         chat.reply(error.message);
         figure.mood = 'sad';
+      })
+      .finally(() => {
+        agentsLoaded = undefined;
       });
     return agentsLoaded;
   }
 
   function switchAgent(id: AgentId) {
-    if (busy || id === agent) return;
+    if (signal.aborted || busy || id === agent) return;
+    chosen = true;
     agent = id;
     conversation = undefined;
     approved.clear();
@@ -618,10 +686,10 @@ export function createApp(config: RuntimeConfig): KlippApp {
   }
 
   function open(greet = true) {
-    if (mode !== 'closed') return;
+    if (signal.aborted || mode !== 'closed') return;
     mode = 'open';
     chat.show();
-    void loadAgents();
+    void loadAgents(true);
     if (greet && !greeted) {
       greeted = true;
       chat.reply(GREETING);
@@ -642,6 +710,7 @@ export function createApp(config: RuntimeConfig): KlippApp {
   }
 
   async function reveal(id: string) {
+    if (signal.aborted) return;
     greeted = true;
     open(false);
     // The ID comes from a link anyone could craft: it is checked before it is shown, and what
@@ -652,7 +721,8 @@ export function createApp(config: RuntimeConfig): KlippApp {
       figure.mood = 'sad';
       return;
     }
-    const element = await waitFor(() => resolve(id).element, 10_000);
+    const element = await waitFor(() => resolve(id).element, 10_000, signal);
+    if (signal.aborted) return;
     if (!element) {
       chat.reply(`I couldn't find \`${id.trim()}\` on this page.`);
       figure.mood = 'sad';
@@ -662,8 +732,11 @@ export function createApp(config: RuntimeConfig): KlippApp {
     await new Promise(requestAnimationFrame);
     await refresh();
     const target =
-      parsed.target === undefined ? undefined : await findTarget(element, parsed.target);
+      parsed.target === undefined
+        ? undefined
+        : await findTarget(element, parsed.target, 10_000, signal);
     const picked = { element, point: middleOf(element, target), ...(target ? { target } : {}) };
+    if (signal.aborted) return;
     focusOn(picked, true);
     if (parsed.target !== undefined && !target) {
       chat.reply(
@@ -692,19 +765,47 @@ export function createApp(config: RuntimeConfig): KlippApp {
   });
   ui.cancel.addEventListener('click', () => cancelPicking?.());
 
+  function destroy() {
+    if (signal.aborted) return;
+    lifetime.abort();
+    retireToolCalls();
+    close();
+    approved.clear();
+    queued.length = 0;
+    conversation = undefined;
+    typedInstead = '';
+    manifest = undefined;
+    agents = [];
+    chat.destroy();
+    overlay.destroy();
+    figure.destroy();
+    ui.host.remove();
+    try {
+      localStorage.removeItem(AGENT_KEY);
+    } catch {
+      /* Storage may be blocked. */
+    }
+  }
+
   return {
+    destroy,
     toggle: () => (mode === 'closed' ? open() : close()),
     open: () => open(),
     close,
     pick,
-    reveal,
+    reveal: (id) =>
+      reveal(id).catch((error: unknown) => {
+        if (!signal.aborted) throw error;
+      }),
     notify(text, sad = false) {
+      if (signal.aborted) return;
       greeted = true;
       open(false);
       chat.reply(text);
       figure.mood = sad ? 'sad' : 'idle';
     },
     showFigure() {
+      if (signal.aborted) return;
       if (!figure.button.hidden) return;
       figure.button.hidden = false;
       figure.greet();

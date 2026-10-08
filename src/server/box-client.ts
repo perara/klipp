@@ -1,3 +1,4 @@
+import { abortable } from '../shared/abort.js';
 import type { BoxIssue } from '../box/issues.js';
 import type { AgentId, AgentsResponse } from '../shared/protocol.js';
 import type { AgentEvent } from './agents.js';
@@ -9,6 +10,9 @@ export interface BoxConnection {
   url: string;
   token: string;
 }
+
+/** Covers discovery headers and the entire response body. */
+export const DISCOVERY_TIMEOUT_MS = 5_000;
 
 const EVENT_TYPES = new Set(['session', 'text', 'break', 'activity', 'error', 'done']);
 
@@ -60,10 +64,10 @@ export function boxRunner(box: BoxConnection, fetchImpl: typeof fetch = fetch): 
     return `The AI box at ${base} answered ${response.status}.`;
   }
 
-  async function load(): Promise<Map<AgentId, string | undefined>> {
+  async function load(signal: AbortSignal): Promise<Map<AgentId, string | undefined>> {
     let response: Response;
     try {
-      response = await fetchImpl(`${base}/v1/agents`, { headers: auth });
+      response = await fetchImpl(`${base}/v1/agents`, { headers: auth, signal });
     } catch {
       throw new Error(unreachable);
     }
@@ -82,13 +86,22 @@ export function boxRunner(box: BoxConnection, fetchImpl: typeof fetch = fetch): 
   }
 
   return {
-    async problem(agent) {
+    async problem(agent, signal) {
       if (!box.token) return noToken;
-      if (!cache || Date.now() - cache.at > 10_000) cache = { at: Date.now(), agents: load() };
+      signal?.throwIfAborted();
+      if (!cache || Date.now() - cache.at > 10_000) {
+        const deadline = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
+        const current = { at: Date.now(), agents: abortable(load(deadline), deadline) };
+        cache = current;
+        void current.agents.catch(() => {
+          if (cache === current) cache = undefined;
+        });
+      }
       try {
-        return (await cache.agents).get(agent);
+        const agents = await (signal ? abortable(cache.agents, signal) : cache.agents);
+        return agents.get(agent);
       } catch (error) {
-        cache = undefined;
+        signal?.throwIfAborted();
         return error instanceof Error ? error.message : String(error);
       }
     },

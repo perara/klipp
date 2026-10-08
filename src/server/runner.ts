@@ -31,7 +31,7 @@ export interface RunHooks {
 /** Where the agents run: here, as child processes, or in an AI box. */
 export interface Runner {
   /** Why the agent can't run, or undefined when it can. */
-  problem(agent: AgentId): Promise<string | undefined>;
+  problem(agent: AgentId, signal?: AbortSignal): Promise<string | undefined>;
   /** Runs one turn until it ends, streaming its events; failures arrive as `error` events. */
   run(request: RunRequest, hooks: RunHooks): Promise<void>;
 }

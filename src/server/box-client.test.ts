@@ -4,10 +4,10 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startBox, type BoxServer } from '../box/server.js';
 import type { AgentEvent } from './agents.js';
-import { boxRunner, ndjsonLines } from './box-client.js';
+import { boxRunner, DISCOVERY_TIMEOUT_MS, ndjsonLines } from './box-client.js';
 import { createKlippMiddleware } from './handler.js';
 import type { McpResult } from './mcp.js';
 
@@ -35,7 +35,10 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await box.close();
-  for (const s of stubs) s.close();
+  for (const s of stubs) {
+    s.closeAllConnections();
+    s.close();
+  }
 });
 
 /** A stand-in box that answers every request the same way. */
@@ -322,3 +325,108 @@ it.each(['claude', 'codex'] as const)(
     expect(textOf(events)).toContain('Image received: image/jpeg');
   },
 );
+
+it.each(['headers', 'body'])(
+  'bounds stalled discovery %s and evicts the failed shared request',
+  async (phase) => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const deadline = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation((ms) => timeout(ms === DISCOVERY_TIMEOUT_MS ? 50 : ms));
+    let requests = 0;
+    let closed = false;
+    const url = await stub((res) => {
+      requests++;
+      if (requests > 1) {
+        res.end(JSON.stringify({ agents: [{ id: 'claude', available: true }] }));
+        return;
+      }
+      res.on('close', () => {
+        closed = true;
+      });
+      if (phase === 'body') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.write('{"agents":');
+      }
+    });
+    try {
+      const runner = boxRunner({ url, token: TOKEN });
+      expect(await runner.problem('claude')).toBeTypeOf('string');
+      expect(deadline).toHaveBeenCalledWith(5_000);
+      await vi.waitFor(() => expect(closed).toBe(true));
+      expect(await runner.problem('claude')).toBeUndefined();
+      expect(requests).toBe(2);
+    } finally {
+      deadline.mockRestore();
+    }
+  },
+);
+
+it('cancels one discovery waiter without canceling another live consumer', async () => {
+  let release!: () => void;
+  let requests = 0;
+  let closed = false;
+  const url = await stub((res) => {
+    requests++;
+    res.on('close', () => {
+      closed = true;
+    });
+    release = () => res.end(JSON.stringify({ agents: [{ id: 'claude', available: true }] }));
+  });
+  const runner = boxRunner({ url, token: TOKEN });
+  const abort = new AbortController();
+  const abandoned = runner.problem('claude', abort.signal);
+  const live = runner.problem('claude');
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  abort.abort();
+  await expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+  expect(closed).toBe(false);
+  release();
+  expect(await live).toBeUndefined();
+  expect(requests).toBe(1);
+});
+
+it('releases chat capacity on disconnect and middleware close while discovery is stalled', async () => {
+  let held!: ServerResponse;
+  const url = await stub((res) => {
+    held = res;
+  });
+  const stopped: string[] = [];
+  const middleware = createKlippMiddleware({
+    root: process.cwd(),
+    maxRuns: 2,
+    box: { url, token: TOKEN },
+    log: (entry) => {
+      if (entry.event === 'turn') stopped.push(entry.outcome);
+    },
+  });
+  const server = createServer((req, res) => middleware(req, res, () => res.end()));
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  stubs.push(server);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = () =>
+    fetch(`${base}/@klipp/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Klipp': '1' },
+      body: JSON.stringify({ agent: 'claude', text: 'hi', page: {} }),
+    });
+  try {
+    const first = await post();
+    const second = await post();
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await post()).status).toBe(429);
+    await first.body!.cancel();
+    await second.body!.cancel();
+    await vi.waitFor(() => expect(stopped).toEqual(['stopped', 'stopped']));
+    const third = await post();
+    expect(third.status).toBe(200);
+    middleware.close();
+    await vi.waitFor(() => expect(stopped).toHaveLength(3));
+    await third.body!.cancel();
+    held.end(JSON.stringify({ agents: [{ id: 'claude', available: true }] }));
+  } finally {
+    middleware.close();
+    held?.end();
+  }
+});

@@ -1,3 +1,4 @@
+import { findTarget } from '../client/canvas-targets.js';
 // @vitest-environment happy-dom
 import {
   BoxGeometry,
@@ -12,7 +13,7 @@ import {
   Raycaster,
   Scene,
 } from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   canvasAdapterFor,
   maplibreTargets,
@@ -292,4 +293,25 @@ describe('threeTargets', () => {
     expect(await adapter.find!('aaaaaaaa:1', canvas)).toBeUndefined();
     expect(adapter.at(centre, canvas)?.key).not.toBe('aaaaaaaa:1');
   });
+});
+
+it('cancels an old session’s pending canvas lookup without polling again', async () => {
+  const canvas = canvasAt();
+  let finish!: (target: undefined) => void;
+  const find = vi.fn(
+    () =>
+      new Promise<undefined>((done) => {
+        finish = done;
+      }),
+  );
+  const stop = registerCanvas(canvas, { at: () => undefined, find });
+  const abort = new AbortController();
+  const finding = findTarget(canvas, 'old-target', 10_000, abort.signal);
+  abort.abort();
+  await expect(finding).rejects.toMatchObject({ name: 'AbortError' });
+  finish(undefined);
+  await Promise.resolve();
+  expect(find).toHaveBeenCalledOnce();
+  stop();
+  canvas.remove();
 });

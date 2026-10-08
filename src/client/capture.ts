@@ -1,6 +1,14 @@
 const KEEP = 8;
 const errors: string[] = [];
 const failed: string[] = [];
+let since = 0;
+
+/** Discards diagnostics from the previous host session. */
+export function resetCapture() {
+  errors.length = 0;
+  failed.length = 0;
+  since = performance.now();
+}
 
 function push(list: string[], line: string) {
   list.push(line.length > 300 ? `${line.slice(0, 299)}…` : line);
@@ -55,7 +63,7 @@ export function startCapture() {
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries() as PerformanceResourceTiming[]) {
         const status = entry.responseStatus ?? 0;
-        if (status >= 400 && !entry.name.includes('/@klipp/')) {
+        if (entry.startTime >= since && status >= 400 && !entry.name.includes('/@klipp/')) {
           push(failed, `${status} ${requestPath(entry.name)}`);
         }
       }

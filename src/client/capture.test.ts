@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest';
-import { recentErrors, startCapture } from './capture.js';
+import { failedRequests, recentErrors, resetCapture, startCapture } from './capture.js';
 
 describe('startCapture', () => {
   it('keeps what an error says, and names objects without opening them', () => {
@@ -15,5 +15,11 @@ describe('startCapture', () => {
       '<button>',
     ]);
     expect(quiet).toHaveBeenCalledTimes(3);
+    resetCapture();
+    expect(recentErrors()).toEqual([]);
+    expect(failedRequests()).toEqual([]);
+    console.error('New session');
+    expect(recentErrors()).toEqual(['New session']);
+    quiet.mockRestore();
   });
 });

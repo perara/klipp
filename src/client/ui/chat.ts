@@ -24,6 +24,11 @@ export class Reply {
     private readonly update: (change: () => void) => void,
   ) {}
 
+  destroy() {
+    cancelAnimationFrame(this.frame);
+    this.text = '';
+  }
+
   append(delta: string) {
     this.text += delta;
     if (this.frame) return;
@@ -144,6 +149,17 @@ export class ChatView {
     hidden: true,
   });
 
+  private readonly replies = new Set<Reply>();
+
+  destroy() {
+    for (const reply of this.replies) reply.destroy();
+    this.replies.clear();
+    this.input.value = '';
+    this.log.replaceChildren();
+    this.attach(undefined);
+    this.element.remove();
+  }
+
   constructor(private readonly handlers: ChatHandlers) {
     const send = () => {
       const text = this.input.value.trim();
@@ -256,6 +272,7 @@ export class ChatView {
     const reply = new Reply(this.add(h('div', { class: 'msg klipp' })), (change) =>
       this.keepInView(change),
     );
+    this.replies.add(reply);
     if (text) reply.append(text);
     return reply;
   }

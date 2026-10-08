@@ -1,5 +1,5 @@
 import type { RuntimeConfig } from '../shared/runtime-config.js';
-import { startCapture } from './capture.js';
+import { resetCapture, startCapture } from './capture.js';
 import { listAgents, pair } from './chat-client.js';
 import { identify, resolve } from './identify.js';
 import type { KlippApp } from './ui/app.js';
@@ -11,6 +11,8 @@ export interface KlippGlobal {
   id(element: Element): string;
   find(id: string): Element | undefined;
   app(): Promise<KlippApp>;
+  /** Synchronously clears private session state and cancels pending work. The UI is recreated on use. */
+  reset(): void;
 }
 
 declare global {
@@ -66,28 +68,28 @@ export function matchesHotkey(event: KeyboardEvent, hotkey: Hotkey): boolean {
 
 const PAIR_PARAM = 'klipp-pair';
 
-/** Whether the chat server answers this user, with an agent that can run. */
-const chatAnswers = (config: RuntimeConfig): Promise<boolean> =>
-  listAgents(config.endpoint).then(
-    (answer) => answer.agents.some((agent) => agent.available),
-    () => false,
-  );
-
 /**
  * Takes the pairing code out of the address before anything can see or keep it, and pairs
  * this device with the dev server.
  */
-function pairFromLink(config: RuntimeConfig, app: () => Promise<KlippApp>) {
+function pairFromLink(config: RuntimeConfig, app: () => Promise<KlippApp>, signal: AbortSignal) {
   const url = new URL(window.location.href);
   const code = url.searchParams.get(PAIR_PARAM);
   if (code === null) return;
   url.searchParams.delete(PAIR_PARAM);
   window.history.replaceState(window.history.state, '', url);
-  void pair(config.endpoint, code).then((problem) =>
-    app().then((a) =>
-      a.notify(problem ?? 'This device is paired. Tell me what you noticed!', Boolean(problem)),
-    ),
-  );
+  void pair(config.endpoint, code, signal)
+    .then((problem) =>
+      signal.aborted
+        ? undefined
+        : app().then((a) =>
+            a.notify(
+              problem ?? 'This device is paired. Tell me what you noticed!',
+              Boolean(problem),
+            ),
+          ),
+    )
+    .catch(() => undefined);
 }
 
 /** Installs the hotkey, the deep-link handler and the paperclip. The UI itself loads on first use. */
@@ -95,12 +97,42 @@ export function start(config: RuntimeConfig): void {
   if (typeof window === 'undefined' || window.klipp) return;
   startCapture();
   let loading: Promise<KlippApp> | undefined;
-  const app = () => (loading ??= import('./ui/app.js').then((m) => m.createApp(config)));
-  if (config.chat) pairFromLink(config, app);
+  let current: KlippApp | undefined;
+  let lifetime = new AbortController();
+  const app = () => {
+    const signal = lifetime.signal;
+    return (loading ??= import('./ui/app.js').then((m) => {
+      signal.throwIfAborted();
+      return (current = m.createApp(config));
+    }));
+  };
+  const useApp = (use: (app: KlippApp) => void) => {
+    const signal = lifetime.signal;
+    void app()
+      .then((a) => {
+        if (!signal.aborted) use(a);
+      })
+      .catch(() => undefined);
+  };
+  if (config.chat) pairFromLink(config, app, lifetime.signal);
   window.klipp = {
     id: (element) => identify(element).id,
     find: (id) => resolve(id).element,
     app,
+    reset() {
+      lifetime.abort();
+      current?.destroy();
+      current = undefined;
+      loading = undefined;
+      resetCapture();
+      try {
+        localStorage.removeItem('klipp:agent');
+      } catch {
+        /* Storage may be blocked. */
+      }
+      lifetime = new AbortController();
+      scheduleLauncher();
+    },
   };
 
   const hotkey = parseHotkey(config.hotkey);
@@ -110,7 +142,7 @@ export function start(config: RuntimeConfig): void {
       if (!matchesHotkey(event, hotkey)) return;
       event.preventDefault();
       event.stopPropagation();
-      void app().then((a) => a.toggle());
+      useApp((a) => a.toggle());
     },
     true,
   );
@@ -122,7 +154,9 @@ export function start(config: RuntimeConfig): void {
     const linked = new URLSearchParams(window.location.search).get('klipp');
     if (!linked || linked === revealed) return;
     revealed = linked;
-    void app().then((a) => a.reveal(linked));
+    useApp((a) => {
+      void a.reveal(linked);
+    });
   };
   followLink();
   const navigation = (window as { navigation?: EventTarget }).navigation;
@@ -131,14 +165,41 @@ export function start(config: RuntimeConfig): void {
   window.addEventListener('popstate', followLink);
 
   const automated = navigator.webdriver && !config.launcherUnderAutomation;
-  if (config.launcher && !automated) {
-    const show = () => {
-      // In a build, the paperclip waits for the chat server to answer: a site without one,
-      // or one that won't answer this user, gets no paperclip that can't talk.
-      const answering = config.dev || !config.chat ? Promise.resolve(true) : chatAnswers(config);
-      void answering.then((yes) => (yes ? app().then((a) => a.showFigure()) : undefined));
-    };
-    if ('requestIdleCallback' in window) window.requestIdleCallback(show, { timeout: 2000 });
-    else setTimeout(show, 300);
+  let checking = false;
+  let shown = false;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let attempts = 0;
+  function scheduleLauncher() {
+    clearTimeout(retry);
+    checking = false;
+    shown = false;
+    attempts = 0;
+    if (!config.launcher || automated) return;
+    retry = setTimeout(checkLauncher, 300);
   }
+  function checkLauncher() {
+    if (!config.launcher || automated || shown || checking) return;
+    clearTimeout(retry);
+    checking = true;
+    const signal = lifetime.signal;
+    const answering =
+      config.dev || !config.chat
+        ? Promise.resolve(true)
+        : listAgents(config.endpoint, AbortSignal.any([signal, AbortSignal.timeout(5_000)])).then(
+            (answer) => answer.agents.some((a) => a.available),
+            () => false,
+          );
+    void answering.then((yes) => {
+      if (signal.aborted) return;
+      checking = false;
+      if (yes) {
+        shown = true;
+        useApp((a) => a.showFigure());
+      } else if (attempts < 5)
+        retry = setTimeout(checkLauncher, Math.min(30_000, 1000 * 2 ** attempts++));
+    });
+  }
+  window.addEventListener('focus', checkLauncher);
+  window.addEventListener('online', checkLauncher);
+  scheduleLauncher();
 }
