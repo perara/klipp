@@ -1,3 +1,4 @@
+import { abortable } from '../shared/abort.js';
 import { canvasAdapterFor } from '../canvas/registry.js';
 import { MAX_SCREENSHOT_BYTES, type Screenshot } from '../shared/screenshot.js';
 
@@ -31,13 +32,22 @@ export function encodeScreenshot(canvas: HTMLCanvasElement): Screenshot {
 }
 
 /** Detached, redacted DOM: no original attributes, URLs, values, script or generated content. */
-export async function screenshotSvg(region: Region): Promise<{ svg: string; warnings: string[] }> {
+export async function screenshotSvg(
+  region: Region,
+  signal?: AbortSignal,
+): Promise<{ svg: string; warnings: string[] }> {
+  signal?.throwIfAborted();
   const warnings: string[] = [];
   const pixels = new Map<HTMLCanvasElement, string>();
   // Read native canvases together immediately after a frame. Adapters may render/read their own
   // WebGL frame, or return their cached pixels. Never ask the browser for display permissions.
-  await new Promise<void>((resolve) =>
-    requestAnimationFrame(() => {
+  await new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      cancelAnimationFrame(frame);
+      reject(new DOMException('Capture cancelled.', 'AbortError'));
+    };
+    const frame = requestAnimationFrame(() => {
+      signal?.removeEventListener('abort', abort);
       for (const canvas of document.querySelectorAll('canvas')) {
         if (canvas.closest('klipp-root, [data-klipp-private]')) continue;
         try {
@@ -47,12 +57,15 @@ export async function screenshotSvg(region: Region): Promise<{ svg: string; warn
         }
       }
       resolve();
-    }),
-  );
+    });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
   const doc = document.implementation.createHTMLDocument('');
   const styles: string[] = [];
   let count = 0;
   const clone = async (node: Node): Promise<Node | undefined> => {
+    signal?.throwIfAborted();
     if (node instanceof Text)
       return doc.createTextNode((node.textContent ?? '').replace(/\S/g, '•'));
     if (
@@ -97,10 +110,12 @@ export async function screenshotSvg(region: Region): Promise<{ svg: string; warn
       let data = pixels.get(node);
       try {
         const registered = canvasAdapterFor(node);
-        data = (await registered?.adapter.screenshot?.(node)) ?? data;
+        const capture = Promise.resolve(registered?.adapter.screenshot?.(node));
+        data = (await (signal ? abortable(capture, signal) : capture)) ?? data;
       } catch {
         warnings.push('A canvas adapter could not capture its frame.');
       }
+      signal?.throwIfAborted();
       if (
         data &&
         /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(data) &&
@@ -118,6 +133,7 @@ export async function screenshotSvg(region: Region): Promise<{ svg: string; warn
     return el;
   };
   const body = await clone(document.body);
+  signal?.throwIfAborted();
   if (!body) throw new Error('There is no visible page to capture.');
   const rect = document.body.getBoundingClientRect();
   const wrap = doc.createElement('div');
@@ -136,7 +152,12 @@ export async function screenshotSvg(region: Region): Promise<{ svg: string; warn
   return { svg: new XMLSerializer().serializeToString(svg), warnings };
 }
 
-export async function captureScreenshot(element?: Element, region?: Region): Promise<Capture> {
+export async function captureScreenshot(
+  element?: Element,
+  region?: Region,
+  signal?: AbortSignal,
+): Promise<Capture> {
+  signal?.throwIfAborted();
   const box =
     region ??
     (element
@@ -156,7 +177,7 @@ export async function captureScreenshot(element?: Element, region?: Region): Pro
     crop.height <= 0
   )
     throw new Error('The screenshot region is outside the viewport.');
-  const { svg, warnings } = await screenshotSvg(crop);
+  const { svg, warnings } = await screenshotSvg(crop, signal);
   const image = new Image();
   const loaded = new Promise<void>((done, fail) => {
     image.onload = () => done();
@@ -167,23 +188,32 @@ export async function captureScreenshot(element?: Element, region?: Region): Pro
         ),
       );
   });
-  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  await loaded;
-  const preview = document.createElement('canvas');
-  const factor = Math.min(1, 1600 / crop.width, 1600 / crop.height);
-  preview.width = Math.max(1, Math.floor(crop.width * factor));
-  preview.height = Math.max(1, Math.floor(crop.height * factor));
-  const context = preview.getContext('2d')!;
-  context.fillStyle = '#fff';
-  context.fillRect(0, 0, preview.width, preview.height);
-  context.drawImage(image, 0, 0, preview.width, preview.height);
-  const encoded = encodeScreenshot(preview);
-  // Preview the exact compressed bytes which approval will send.
-  const exact = new Image();
-  exact.src = `data:${encoded.mimeType};base64,${encoded.data}`;
-  await exact.decode();
-  preview.width = encoded.width;
-  preview.height = encoded.height;
-  preview.getContext('2d')!.drawImage(exact, 0, 0);
-  return { image: encoded, preview, warnings };
+  try {
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    await (signal ? abortable(loaded, signal) : loaded);
+    signal?.throwIfAborted();
+    const preview = document.createElement('canvas');
+    const factor = Math.min(1, 1600 / crop.width, 1600 / crop.height);
+    preview.width = Math.max(1, Math.floor(crop.width * factor));
+    preview.height = Math.max(1, Math.floor(crop.height * factor));
+    const context = preview.getContext('2d')!;
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, preview.width, preview.height);
+    context.drawImage(image, 0, 0, preview.width, preview.height);
+    const encoded = encodeScreenshot(preview);
+    // Preview the exact compressed bytes which approval will send.
+    const exact = new Image();
+    exact.src = `data:${encoded.mimeType};base64,${encoded.data}`;
+    const decoded = exact.decode();
+    await (signal ? abortable(decoded, signal) : decoded);
+    signal?.throwIfAborted();
+    preview.width = encoded.width;
+    preview.height = encoded.height;
+    preview.getContext('2d')!.drawImage(exact, 0, 0);
+    return { image: encoded, preview, warnings };
+  } finally {
+    image.onload = null;
+    image.onerror = null;
+    image.removeAttribute('src');
+  }
 }

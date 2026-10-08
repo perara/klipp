@@ -366,3 +366,69 @@ test('every mode can be left, and the page works normally after', async ({ page 
   await page.getByRole('button', { name: 'Count' }).click();
   await expect(page.getByTestId('clicks')).toHaveText('Clicks: 1');
 });
+
+test('the public reset API clears a host session before the next user sends', async ({ page }) => {
+  await openChat(page);
+  await page.evaluate(() => console.error('Alice private diagnostic'));
+  const first = page.waitForRequest((request) => request.url().endsWith('/@klipp/chat'));
+  await ask(page, 'Alice private message');
+  const alice = (await first).postDataJSON() as { page: { recentErrors: string[] } };
+  expect(alice.page.recentErrors).toContain('Alice private diagnostic');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+  await input(page).fill('Alice private draft');
+  expect(
+    await page.evaluate(() => {
+      window.klipp!.reset();
+      return document.querySelectorAll('klipp-root').length;
+    }),
+  ).toBe(0);
+  await page.keyboard.press('Alt+Shift+KeyK');
+  await expect(chat(page)).toBeVisible();
+  await expect(input(page)).toHaveValue('');
+  await expect(chat(page)).not.toContainText('Alice');
+  const second = page.waitForRequest((request) => request.url().endsWith('/@klipp/chat'));
+  await ask(page, 'Bob message');
+  const bob = (await second).postDataJSON() as {
+    conversation?: string;
+    page: { recentErrors: string[] };
+  };
+  expect(bob.conversation).toBeUndefined();
+  expect(bob.page.recentErrors).not.toContain('Alice private diagnostic');
+  await expect(replies(page).last()).toHaveText('Hello! I am a test paperclip.');
+});
+
+test('reopening discovers recovered Codex without reloading the document', async ({ page }) => {
+  let up = false;
+  let discoveries = 0;
+  await page.route('**/@klipp/agents', (route) => {
+    discoveries++;
+    return route.fulfill({
+      json: {
+        preferred: 'claude',
+        agents: [
+          { id: 'claude', label: 'Claude', available: false },
+          { id: 'codex', label: 'Codex', available: up },
+        ],
+      },
+    });
+  });
+  await page.route('**/@klipp/chat', (route) =>
+    route.fulfill({
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"text","delta":"Recovered"}\n\ndata: {"type":"done"}\n\n',
+    }),
+  );
+  await page.goto('./');
+  await page.keyboard.press('Alt+Shift+KeyK');
+  await expect(chat(page)).toContainText('I need');
+  const before = discoveries;
+  await chat(page).getByRole('button', { name: 'Close', exact: true }).click();
+  up = true;
+  await page.keyboard.press('Alt+Shift+KeyK');
+  await expect(chat(page).getByRole('button', { name: 'Codex', exact: true })).toBeVisible();
+  expect(discoveries).toBeGreaterThan(before);
+  const sent = page.waitForRequest((request) => request.url().endsWith('/@klipp/chat'));
+  await ask(page, 'retry');
+  expect(((await sent).postDataJSON() as { agent: string }).agent).toBe('codex');
+  await expect(replies(page).last()).toHaveText('Recovered');
+});

@@ -1,3 +1,4 @@
+import { abortable } from '../shared/abort.js';
 import type {
   AgentsResponse,
   ChatEvent,
@@ -20,10 +21,13 @@ async function errorOf(response: Response): Promise<string> {
 }
 
 /** Which agents the dev server can run, and which to start with. */
-export async function listAgents(endpoint: string): Promise<AgentsResponse> {
+export async function listAgents(endpoint: string, signal?: AbortSignal): Promise<AgentsResponse> {
   let response: Response;
   try {
-    response = await fetch(`${endpoint}agents`, { headers: HEADERS });
+    response = await fetch(`${endpoint}agents`, {
+      headers: HEADERS,
+      signal: signal ?? AbortSignal.timeout(5_000),
+    });
   } catch {
     throw new Unreachable();
   }
@@ -34,13 +38,18 @@ export async function listAgents(endpoint: string): Promise<AgentsResponse> {
 }
 
 /** Sends one message and yields what the server streams back while the agent works. */
-export async function* talk(endpoint: string, request: ChatRequest): AsyncGenerator<ChatEvent> {
+export async function* talk(
+  endpoint: string,
+  request: ChatRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<ChatEvent> {
   let response: Response;
   try {
     response = await fetch(`${endpoint}chat`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify(request),
+      signal: signal ?? null,
     });
   } catch {
     throw new Unreachable();
@@ -49,24 +58,33 @@ export async function* talk(endpoint: string, request: ChatRequest): AsyncGenera
   if (!response.ok || !response.body) throw new Error(await errorOf(response));
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    buffer += value;
-    for (let end = buffer.indexOf('\n\n'); end >= 0; end = buffer.indexOf('\n\n')) {
-      const chunk = buffer.slice(0, end);
-      buffer = buffer.slice(end + 2);
-      if (chunk.startsWith('data: ')) yield JSON.parse(chunk.slice(6)) as ChatEvent;
+  try {
+    for (;;) {
+      const { value, done } = await (signal ? abortable(reader.read(), signal) : reader.read());
+      if (done) return;
+      buffer += value;
+      for (let end = buffer.indexOf('\n\n'); end >= 0; end = buffer.indexOf('\n\n')) {
+        const chunk = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        if (chunk.startsWith('data: ')) yield JSON.parse(chunk.slice(6)) as ChatEvent;
+      }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 }
 
 /** Answers a page-tool call the agent is waiting on. */
-export async function answerTool(endpoint: string, result: ToolResultRequest): Promise<void> {
+export async function answerTool(
+  endpoint: string,
+  result: ToolResultRequest,
+  signal?: AbortSignal,
+): Promise<void> {
   await fetch(`${endpoint}tool-result`, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(result),
+    signal: signal ?? null,
   }).catch(() => undefined);
 }
 
@@ -77,11 +95,13 @@ export async function answerTool(endpoint: string, result: ToolResultRequest): P
 export async function fileIssue(
   endpoint: string,
   request: IssueRequest,
+  signal?: AbortSignal,
 ): Promise<Exclude<IssueResponse, { error: string }>> {
   const response = await fetch(`${endpoint}issue`, {
     method: 'POST',
     headers: HEADERS,
     body: JSON.stringify(request),
+    signal: signal ?? null,
   });
   if (missing(response)) throw new Error('No chat server is running.');
   const result = (await response
@@ -92,12 +112,17 @@ export async function fileIssue(
 }
 
 /** Pairs this device with the dev server, which then answers it as it does localhost. */
-export async function pair(endpoint: string, code: string): Promise<string | undefined> {
+export async function pair(
+  endpoint: string,
+  code: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   try {
     const response = await fetch(`${endpoint}pair`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify({ code }),
+      signal: signal ?? null,
     });
     return response.ok ? undefined : await errorOf(response);
   } catch {

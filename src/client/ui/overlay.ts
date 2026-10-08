@@ -6,6 +6,13 @@ import { h } from './dom.js';
  * canvas it can outline just the thing drawn there; that box moves with the canvas.
  */
 export class Overlay {
+  destroy() {
+    window.removeEventListener('scroll', this.schedule, true);
+    window.removeEventListener('resize', this.schedule);
+    cancelAnimationFrame(this.frame);
+    this.hide();
+  }
+
   private readonly box = h('div', { class: 'box', hidden: true });
   private readonly label = h('div', { class: 'label', hidden: true });
   private target: Element | undefined;

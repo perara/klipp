@@ -1,3 +1,4 @@
+import { abortable } from '../shared/abort.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { KlippManifest } from '../shared/manifest.js';
 import type {
@@ -202,7 +203,9 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     let outcome: 'answered' | 'failed' | 'stopped' = 'answered';
     const aborted = new AbortController();
     runs.add(aborted);
-    res.on('close', () => aborted.abort());
+    const disconnect = () => aborted.abort();
+    res.once('close', disconnect);
+    if (res.destroyed) disconnect();
     try {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'text/event-stream');
@@ -210,10 +213,11 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
       res.setHeader('X-Accel-Buffering', 'no');
       const emit = (event: ChatEvent) => {
         if (event.type === 'error') outcome = 'failed';
-        if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+        if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(event)}\n\n`);
       };
       emit({ type: 'conversation', id: conversation.id });
-      const problem = await runner.problem(agent);
+      const problem = await abortable(runner.problem(agent, aborted.signal), aborted.signal);
+      aborted.signal.throwIfAborted();
       if (problem) return emit({ type: 'error', message: problem });
       await runTurn(conversation, request.text, request.page, {
         runner,
@@ -225,8 +229,10 @@ export function createKlippMiddleware(options: KlippServerOptions): KlippMiddlew
     } catch (error) {
       outcome = 'failed';
       const message = error instanceof Error ? error.message : String(error);
-      if (!res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
+      if (!res.writableEnded && !res.destroyed)
+        res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
     } finally {
+      res.removeListener('close', disconnect);
       runs.delete(aborted);
       conversation.busy = false;
       res.end();
